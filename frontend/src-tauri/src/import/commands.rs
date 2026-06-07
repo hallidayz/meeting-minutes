@@ -22,13 +22,13 @@ pub struct AiNotesSession {
     pub timestamp: Option<i64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct AiNotesTranscriptChunk {
     pub speaker: String,
     pub text: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct AiNotesTodoItem {
     pub text: String,
     pub completed: Option<bool>,

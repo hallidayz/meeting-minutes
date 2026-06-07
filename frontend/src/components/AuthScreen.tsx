@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState } from 'react';
-import Image from 'next/image';
 import { BRAND } from '@/config/branding';
 
 interface AuthScreenProps {
@@ -24,9 +23,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticate, isSetup 
     <div className="min-h-screen flex items-center justify-center bg-brand-background">
       <div className="bg-white rounded-xl shadow-lg p-8 w-full max-w-md border border-gray-200">
         <div className="text-center mb-6">
-          <Image src="/brand/logo.png" alt={BRAND.name} width={160} height={64} className="mx-auto rounded mb-3" />
           <h1 className="text-xl font-bold tracking-widest text-brand-primary">{BRAND.name}</h1>
-          <p className="text-xs tracking-widest text-brand-accent font-semibold mt-1">{BRAND.taglinePrimary}</p>
           <p className="text-sm text-gray-600 mt-3">
             {isSetup ? 'Create a PIN to encrypt your meetings locally.' : 'Enter your PIN to unlock.'}
           </p>

@@ -5,6 +5,7 @@ import { TranscriptModelProps } from '@/components/TranscriptSettings';
 import { SelectedDevices } from '@/components/DeviceSelection';
 import { configService, ModelConfig } from '@/services/configService';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 
 export interface OllamaModel {
   name: string;
@@ -91,8 +92,8 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
 
   // Transcript model configuration state
   const [transcriptModelConfig, setTranscriptModelConfig] = useState<TranscriptModelProps>({
-    provider: 'parakeet',
-    model: 'parakeet-tdt-0.6b-v3-int8',
+    provider: 'localWhisper',
+    model: 'large-v3-turbo-q5_0',
     apiKey: null
   });
 
@@ -189,31 +190,46 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     }
   }, [models, modelConfig.provider]);
 
-  // Load transcript configuration on mount
+  // Load transcript configuration once the database is ready
   useEffect(() => {
+    let disposed = false;
+
     const loadTranscriptConfig = async () => {
       try {
         const config = await configService.getTranscriptConfig();
+        if (disposed) return;
         if (config) {
           console.log('[ConfigContext] Loaded saved transcript config:', config);
           setTranscriptModelConfig({
-            provider: config.provider || 'parakeet',
-            model: config.model || 'parakeet-tdt-0.6b-v3-int8',
+            provider: config.provider || 'localWhisper',
+            model: config.model || 'large-v3-turbo-q5_0',
             apiKey: config.apiKey || null
           });
         }
       } catch (error) {
-        console.error('[ConfigContext] Failed to load transcript config:', error);
+        if (!disposed) {
+          console.error('[ConfigContext] Failed to load transcript config:', error);
+        }
       }
     };
+
     loadTranscriptConfig();
+    const unlistenPromise = listen('database-initialized', () => loadTranscriptConfig());
+
+    return () => {
+      disposed = true;
+      unlistenPromise.then((unlisten) => unlisten());
+    };
   }, []);
 
-  // Load model configuration on mount
+  // Load model configuration once the database is ready
   useEffect(() => {
+    let disposed = false;
+
     const fetchModelConfig = async () => {
       try {
         const data = await configService.getModelConfig();
+        if (disposed) return;
         if (data && data.provider) {
           // If provider is custom-openai, fetch the additional config
           if (data.provider === 'custom-openai') {
@@ -253,10 +269,19 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
           }));
         }
       } catch (error) {
-        console.error('Failed to fetch saved model config in ConfigContext:', error);
+        if (!disposed) {
+          console.error('Failed to fetch saved model config in ConfigContext:', error);
+        }
       }
     };
+
     fetchModelConfig();
+    const unlistenPromise = listen('database-initialized', () => fetchModelConfig());
+
+    return () => {
+      disposed = true;
+      unlistenPromise.then((unlisten) => unlisten());
+    };
   }, []);
 
   // Listen for model config updates from other components

@@ -4,6 +4,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Analytics from '@/lib/analytics';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
 
 
@@ -103,6 +104,10 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     fetchMeetings();
+    const unlistenPromise = listen('database-initialized', () => fetchMeetings());
+    return () => {
+      unlistenPromise.then((unlisten) => unlisten());
+    };
   }, [serverAddress, fetchMeetings]);
 
   useEffect(() => {

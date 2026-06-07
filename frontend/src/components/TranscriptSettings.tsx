@@ -6,11 +6,10 @@ import { Button } from './ui/button';
 import { Label } from './ui/label';
 import { Eye, EyeOff, Lock, Unlock } from 'lucide-react';
 import { ModelManager } from './WhisperModelManager';
-import { ParakeetModelManager } from './ParakeetModelManager';
-
+import { getRecommendedModelForTier } from '../lib/whisper';
 
 export interface TranscriptModelProps {
-    provider: 'localWhisper' | 'parakeet' | 'deepgram' | 'elevenLabs' | 'groq' | 'openai';
+    provider: 'localWhisper' | 'fastWhisper' | 'deepgram' | 'elevenLabs' | 'groq' | 'openai';
     model: string;
     apiKey?: string | null;
 }
@@ -26,35 +25,46 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
     const [showApiKey, setShowApiKey] = useState<boolean>(false);
     const [isApiKeyLocked, setIsApiKeyLocked] = useState<boolean>(true);
     const [isLockButtonVibrating, setIsLockButtonVibrating] = useState<boolean>(false);
-    const [selectedWhisperModel, setSelectedWhisperModel] = useState<string>(transcriptModelConfig.provider === 'localWhisper' ? transcriptModelConfig.model : 'small');
-    const [selectedParakeetModel, setSelectedParakeetModel] = useState<string>(transcriptModelConfig.provider === 'parakeet' ? transcriptModelConfig.model : 'parakeet-tdt-0.6b-v3-int8');
+    const [accurateModel, setAccurateModel] = useState<string>(
+        transcriptModelConfig.provider === 'localWhisper'
+            ? transcriptModelConfig.model
+            : getRecommendedModelForTier('accurate')
+    );
+    const [fastModel, setFastModel] = useState<string>(
+        transcriptModelConfig.provider === 'fastWhisper'
+            ? transcriptModelConfig.model
+            : getRecommendedModelForTier('fast')
+    );
 
     useEffect(() => {
-        if (transcriptModelConfig.provider === 'localWhisper' || transcriptModelConfig.provider === 'parakeet') {
+        if (transcriptModelConfig.provider === 'localWhisper' || transcriptModelConfig.provider === 'fastWhisper') {
             setApiKey(null);
         }
     }, [transcriptModelConfig.provider]);
 
     const fetchApiKey = async (provider: string) => {
         try {
-
             const data = await invoke('api_get_transcript_api_key', { provider }) as string;
-
             setApiKey(data || '');
         } catch (err) {
             console.error('Error fetching API key:', err);
             setApiKey(null);
         }
     };
+
     const modelOptions = {
-        localWhisper: [selectedWhisperModel],
-        parakeet: [selectedParakeetModel],
+        localWhisper: [accurateModel],
+        fastWhisper: [fastModel],
         deepgram: ['nova-2-phonecall'],
         elevenLabs: ['eleven_multilingual_v2'],
         groq: ['llama-3.3-70b-versatile'],
         openai: ['gpt-4o'],
     };
-    const requiresApiKey = transcriptModelConfig.provider === 'deepgram' || transcriptModelConfig.provider === 'elevenLabs' || transcriptModelConfig.provider === 'openai' || transcriptModelConfig.provider === 'groq';
+
+    const requiresApiKey = transcriptModelConfig.provider === 'deepgram'
+        || transcriptModelConfig.provider === 'elevenLabs'
+        || transcriptModelConfig.provider === 'openai'
+        || transcriptModelConfig.provider === 'groq';
 
     const handleInputClick = () => {
         if (isApiKeyLocked) {
@@ -63,40 +73,52 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
         }
     };
 
-    const handleWhisperModelSelect = (modelName: string) => {
-        setSelectedWhisperModel(modelName);
-        if (transcriptModelConfig.provider === 'localWhisper') {
+    const handleWhisperModelSelect = (modelName: string, tier: 'accurate' | 'fast') => {
+        if (tier === 'accurate') {
+            setAccurateModel(modelName);
+        } else {
+            setFastModel(modelName);
+        }
+
+        const activeTier = transcriptModelConfig.provider === 'fastWhisper' ? 'fast' : 'accurate';
+        if (activeTier === tier) {
             setTranscriptModelConfig({
                 ...transcriptModelConfig,
-                model: modelName
+                model: modelName,
             });
-            // Close modal after selection
-            if (onModelSelect) {
-                onModelSelect();
-            }
+            onModelSelect?.();
         }
     };
 
-    const handleParakeetModelSelect = (modelName: string) => {
-        setSelectedParakeetModel(modelName);
-        if (transcriptModelConfig.provider === 'parakeet') {
-            setTranscriptModelConfig({
-                ...transcriptModelConfig,
-                model: modelName
-            });
-            // Close modal after selection
-            if (onModelSelect) {
-                onModelSelect();
+    const handleProviderChange = async (provider: TranscriptModelProps['provider']) => {
+        let newModel = modelOptions[provider][0];
+
+        if (provider === 'localWhisper') {
+            try {
+                newModel = await invoke<string>('whisper_get_recommended_model');
+                setAccurateModel(newModel);
+            } catch {
+                newModel = accurateModel || getRecommendedModelForTier('accurate');
             }
+        } else if (provider === 'fastWhisper') {
+            try {
+                newModel = await invoke<string>('whisper_get_recommended_fast_model');
+                setFastModel(newModel);
+            } catch {
+                newModel = fastModel || getRecommendedModelForTier('fast');
+            }
+        }
+
+        setTranscriptModelConfig({ ...transcriptModelConfig, provider, model: newModel });
+
+        if (provider !== 'localWhisper' && provider !== 'fastWhisper') {
+            fetchApiKey(provider);
         }
     };
 
     return (
         <div>
             <div>
-                {/* <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-lg font-semibold text-gray-900">Transcript Settings</h3>
-                </div> */}
                 <div className="space-y-4 pb-6">
                     <div>
                         <Label className="block text-sm font-medium text-gray-700 mb-1">
@@ -105,34 +127,22 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                         <div className="flex space-x-2 mx-1">
                             <Select
                                 value={transcriptModelConfig.provider}
-                                onValueChange={(value) => {
-                                    const provider = value as TranscriptModelProps['provider'];
-                                    const newModel = provider === 'localWhisper' ? selectedWhisperModel : modelOptions[provider][0];
-                                    setTranscriptModelConfig({ ...transcriptModelConfig, provider, model: newModel });
-                                    if (provider !== 'localWhisper') {
-                                        fetchApiKey(provider);
-                                    }
-                                }}
+                                onValueChange={(value) => handleProviderChange(value as TranscriptModelProps['provider'])}
                             >
                                 <SelectTrigger className='focus:ring-1 focus:ring-blue-500 focus:border-blue-500'>
                                     <SelectValue placeholder="Select provider" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="parakeet">⚡ Parakeet (Recommended - Real-time / Accurate)</SelectItem>
-                                    <SelectItem value="localWhisper">🏠 Local Whisper (High Accuracy)</SelectItem>
-                                    {/* <SelectItem value="deepgram">☁️ Deepgram (Backup)</SelectItem>
-                                    <SelectItem value="elevenLabs">☁️ ElevenLabs</SelectItem>
-                                    <SelectItem value="groq">☁️ Groq</SelectItem>
-                                    <SelectItem value="openai">☁️ OpenAI</SelectItem> */}
+                                    <SelectItem value="localWhisper">Whisper.cpp (Recommended — Max Accuracy)</SelectItem>
+                                    <SelectItem value="fastWhisper">Fast-Whisper (Speed Optimized)</SelectItem>
                                 </SelectContent>
                             </Select>
 
-                            {transcriptModelConfig.provider !== 'localWhisper' && transcriptModelConfig.provider !== 'parakeet' && (
+                            {requiresApiKey && (
                                 <Select
                                     value={transcriptModelConfig.model}
                                     onValueChange={(value) => {
-                                        const model = value as TranscriptModelProps['model'];
-                                        setTranscriptModelConfig({ ...transcriptModelConfig, model });
+                                        setTranscriptModelConfig({ ...transcriptModelConfig, model: value });
                                     }}
                                 >
                                     <SelectTrigger className='focus:ring-1 focus:ring-blue-500 focus:border-blue-500'>
@@ -145,30 +155,30 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                                     </SelectContent>
                                 </Select>
                             )}
-
                         </div>
                     </div>
 
                     {transcriptModelConfig.provider === 'localWhisper' && (
                         <div className="mt-6">
                             <ModelManager
-                                selectedModel={selectedWhisperModel}
-                                onModelSelect={handleWhisperModelSelect}
+                                selectedModel={accurateModel}
+                                onModelSelect={(model) => handleWhisperModelSelect(model, 'accurate')}
                                 autoSave={true}
+                                modelTier="accurate"
                             />
                         </div>
                     )}
 
-                    {transcriptModelConfig.provider === 'parakeet' && (
+                    {transcriptModelConfig.provider === 'fastWhisper' && (
                         <div className="mt-6">
-                            <ParakeetModelManager
-                                selectedModel={selectedParakeetModel}
-                                onModelSelect={handleParakeetModelSelect}
+                            <ModelManager
+                                selectedModel={fastModel}
+                                onModelSelect={(model) => handleWhisperModelSelect(model, 'fast')}
                                 autoSave={true}
+                                modelTier="fast"
                             />
                         </div>
                     )}
-
 
                     {requiresApiKey && (
                         <div>
@@ -219,13 +229,5 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                 </div>
             </div>
         </div>
-    )
+    );
 }
-
-
-
-
-
-
-
-

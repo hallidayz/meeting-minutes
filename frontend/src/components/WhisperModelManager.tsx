@@ -11,7 +11,10 @@ import {
   getModelPerformanceBadge,
   isQuantizedModel,
   getModelTagline,
-  WhisperAPI
+  WhisperAPI,
+  SttModelTier,
+  filterModelsByTier,
+  getRecommendedModelForTier,
 } from '../lib/whisper';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 
@@ -20,13 +23,16 @@ interface ModelManagerProps {
   onModelSelect?: (modelName: string) => void;
   className?: string;
   autoSave?: boolean;
+  /** Filter and highlight models for Whisper.cpp (accurate) or Fast-Whisper (fast). */
+  modelTier?: SttModelTier;
 }
 
 export function ModelManager({
   selectedModel,
   onModelSelect,
   className = '',
-  autoSave = false
+  autoSave = false,
+  modelTier = 'accurate',
 }: ModelManagerProps) {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -422,17 +428,21 @@ export function ModelManager({
     );
   }
 
-  const basicModelNames = ["base", "small", "large-v3-turbo"];
-  const basicModels = models.filter(m => basicModelNames.includes(m.name))
+  const tierFilteredModels = filterModelsByTier(models, modelTier);
+  const recommendedName = getRecommendedModelForTier(modelTier);
+  const basicModelNames = modelTier === 'accurate'
+    ? ['large-v3-turbo-q5_0', 'large-v3-turbo', 'small']
+    : ['base-q5_0', 'small-q5_0', 'tiny-q5_0'];
+  const basicModels = tierFilteredModels.filter(m => basicModelNames.includes(m.name))
     .sort((a, b) => basicModelNames.indexOf(a.name) - basicModelNames.indexOf(b.name));
-  const advancedModels = models.filter(m => !basicModelNames.includes(m.name));
+  const advancedModels = tierFilteredModels.filter(m => !basicModelNames.includes(m.name));
 
   return (
     <div className={`space-y-3 ${className}`}>
       {/* Basic Models */}
       <div className="space-y-3">
         {basicModels.map((model) => {
-          const isRecommended = model.name === 'base';
+          const isRecommended = model.name === recommendedName;
           return (
             <ModelCard
               key={model.name}

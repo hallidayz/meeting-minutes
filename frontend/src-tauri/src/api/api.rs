@@ -8,8 +8,8 @@ use crate::{
     database::{
         models::MeetingModel,
         repositories::{
-            meeting::MeetingsRepository, setting::SettingsRepository,
-            transcript::TranscriptsRepository,
+            app_settings::AppSettingsRepository, meeting::MeetingsRepository,
+            setting::SettingsRepository, transcript::TranscriptsRepository,
         },
     },
     onboarding::load_onboarding_status,
@@ -597,6 +597,43 @@ pub async fn api_get_api_key<R: Runtime>(
     }
 }
 
+const AUTO_GENERATE_SETTING_KEY: &str = "auto_generate_summary";
+
+#[tauri::command]
+pub async fn api_get_auto_generate_setting<R: Runtime>(
+    _app: AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+) -> Result<bool, String> {
+    let pool = state.db_manager.pool();
+    match AppSettingsRepository::get(pool, AUTO_GENERATE_SETTING_KEY).await {
+        Ok(Some(value)) => Ok(value == "true"),
+        Ok(None) => Ok(true),
+        Err(e) => {
+            log_error!("Failed to get auto-generate setting: {}", e);
+            Err(e.to_string())
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn api_save_auto_generate_setting<R: Runtime>(
+    _app: AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<serde_json::Value, String> {
+    let pool = state.db_manager.pool();
+    if let Err(e) =
+        AppSettingsRepository::set_bool(pool, AUTO_GENERATE_SETTING_KEY, enabled).await
+    {
+        log_error!("Failed to save auto-generate setting: {}", e);
+        return Err(e.to_string());
+    }
+    Ok(serde_json::json!({
+        "status": "success",
+        "message": "Auto-generate setting saved successfully"
+    }))
+}
+
 #[tauri::command]
 pub async fn api_get_transcript_config<R: Runtime>(
     _app: AppHandle<R>,
@@ -608,24 +645,46 @@ pub async fn api_get_transcript_config<R: Runtime>(
 
     match SettingsRepository::get_transcript_config(pool).await {
         Ok(Some(config)) => {
+            // Migrate legacy Parakeet installs to Fast-Whisper (whisper-rs greedy profile)
+            let (provider, model) = if config.provider == "parakeet" {
+                let migrated_provider = "fastWhisper".to_string();
+                let migrated_model =
+                    crate::whisper_engine::recommended_fast_whisper_model().to_string();
+                log_info!(
+                    "Migrating parakeet transcript config to fastWhisper / {}",
+                    migrated_model
+                );
+                if let Err(e) = SettingsRepository::save_transcript_config(
+                    pool,
+                    &migrated_provider,
+                    &migrated_model,
+                )
+                .await
+                {
+                    log_warn!("Failed to persist parakeet migration: {}", e);
+                }
+                (migrated_provider, migrated_model)
+            } else {
+                (config.provider, config.model)
+            };
+
             log_info!(
                 "Found transcript config: provider={}, model={}",
-                &config.provider,
-                &config.model
+                &provider, &model
             );
-            match SettingsRepository::get_transcript_api_key(pool, &config.provider).await {
+            match SettingsRepository::get_transcript_api_key(pool, &provider).await {
                 Ok(api_key) => {
                     log_info!("Successfully retrieved transcript config and API key.");
                     Ok(Some(TranscriptConfig {
-                        provider: config.provider,
-                        model: config.model,
+                        provider,
+                        model,
                         api_key,
                     }))
                 }
                 Err(e) => {
                     log_error!(
                         "Failed to get transcript API key for provider {}: {}",
-                        &config.provider,
+                        &provider,
                         e
                     );
                     Err(e.to_string())
@@ -633,10 +692,10 @@ pub async fn api_get_transcript_config<R: Runtime>(
             }
         }
         Ok(None) => {
-            log_info!("No transcript config found, returning default.");
+            log_info!("No transcript config found, returning default Whisper.cpp config.");
             Ok(Some(TranscriptConfig {
-                provider: "parakeet".to_string(),
-                model: "parakeet-tdt-0.6b-v3-int8".to_string(),
+                provider: crate::whisper_engine::DEFAULT_TRANSCRIPT_PROVIDER.to_string(),
+                model: crate::whisper_engine::recommended_whisper_model().to_string(),
                 api_key: None,
             }))
         }

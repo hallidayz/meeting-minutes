@@ -160,8 +160,11 @@ pub async fn import_and_initialize_database(
             format!("Failed to import database: {}", e)
         })?;
 
-    // Update app state with the new manager
-    app.manage(AppState { db_manager });
+    if app.try_state::<AppState>().is_none() {
+        app.manage(AppState { db_manager });
+    } else {
+        info!("AppState already managed; imported database will be used on next app restart");
+    }
 
     info!("Legacy database imported and initialized successfully");
 
@@ -177,15 +180,20 @@ pub async fn import_and_initialize_database(
 pub async fn initialize_fresh_database(app: AppHandle) -> Result<(), String> {
     info!("Initializing fresh database");
 
-    let db_manager = DatabaseManager::new_from_app_handle(&app)
-        .await
-        .map_err(|e| {
-            error!("Failed to initialize fresh database: {}", e);
-            format!("Failed to initialize database: {}", e)
-        })?;
-
-    // Update app state with the new manager
-    app.manage(AppState { db_manager: db_manager.clone() });
+    let db_manager = if let Some(state) = app.try_state::<AppState>() {
+        state.db_manager.clone()
+    } else {
+        let manager = DatabaseManager::new_from_app_handle(&app)
+            .await
+            .map_err(|e| {
+                error!("Failed to initialize fresh database: {}", e);
+                format!("Failed to initialize database: {}", e)
+            })?;
+        app.manage(AppState {
+            db_manager: manager.clone(),
+        });
+        manager
+    };
 
     // Set default model configuration for fresh installs
     let pool = db_manager.pool();
@@ -201,11 +209,12 @@ pub async fn initialize_fresh_database(app: AppHandle) -> Result<(), String> {
         error!("Failed to set default summary model config: {}", e);
     }
 
-    // Default Transcription Model: Parakeet
+    // Default Transcription Model: Whisper.cpp (localWhisper)
+    let whisper_model = crate::whisper_engine::recommended_whisper_model();
     if let Err(e) = crate::database::repositories::setting::SettingsRepository::save_transcript_config(
         pool,
-        "parakeet",
-        "parakeet-tdt-0.6b-v3-int8",
+        crate::whisper_engine::DEFAULT_TRANSCRIPT_PROVIDER,
+        whisper_model,
     ).await {
         error!("Failed to set default transcription model config: {}", e);
     }

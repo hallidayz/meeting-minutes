@@ -22,6 +22,7 @@ import { DownloadProgressToastProvider } from '@/components/shared/DownloadProgr
 import { UpdateCheckProvider } from '@/components/UpdateCheckProvider'
 import { RecordingPostProcessingProvider } from '@/contexts/RecordingPostProcessingProvider'
 import { PinGateProvider } from '@/contexts/PinGateContext'
+import { LoadingScreen } from '@/components/LoadingScreen'
 
 const sourceSans3 = Source_Sans_3({
   subsets: ['latin'],
@@ -38,9 +39,12 @@ export default function RootLayout({
 }) {
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [onboardingCompleted, setOnboardingCompleted] = useState(false)
+  const [appReady, setAppReady] = useState(false)
+  const [startupMessage, setStartupMessage] = useState('Starting AI Guardian…')
 
   useEffect(() => {
-    // Check onboarding status first
+    setStartupMessage('Checking setup status…')
+
     invoke<{ completed: boolean } | null>('get_onboarding_status')
       .then((status) => {
         const isComplete = status?.completed ?? false
@@ -55,10 +59,10 @@ export default function RootLayout({
       })
       .catch((error) => {
         console.error('[Layout] Failed to check onboarding status:', error)
-        // Default to showing onboarding if we can't check
         setShowOnboarding(true)
         setOnboardingCompleted(false)
       })
+      .finally(() => setAppReady(true))
   }, [])
 
   // Disable context menu in production
@@ -101,7 +105,6 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${sourceSans3.variable} font-sans antialiased`}>
-        <PinGateProvider>
         <AnalyticsProvider>
           <RecordingStateProvider>
             <TranscriptProvider>
@@ -115,14 +118,19 @@ export default function RootLayout({
                             {/* Download progress toast provider - listens for background downloads */}
                             <DownloadProgressToastProvider />
 
-                            {/* Show onboarding or main app */}
-                            {showOnboarding ? (
+                            {!appReady && <LoadingScreen message={startupMessage} />}
+
+                            {appReady && showOnboarding && (
                               <OnboardingFlow onComplete={handleOnboardingComplete} />
-                            ) : (
-                              <div className="flex">
-                                <Sidebar />
-                                <MainContent>{children}</MainContent>
-                              </div>
+                            )}
+
+                            {appReady && !showOnboarding && (
+                              <PinGateProvider>
+                                <div className="flex">
+                                  <Sidebar />
+                                  <MainContent>{children}</MainContent>
+                                </div>
+                              </PinGateProvider>
                             )}
                           </RecordingPostProcessingProvider>
                         </TooltipProvider>
@@ -135,7 +143,6 @@ export default function RootLayout({
             </TranscriptProvider>
           </RecordingStateProvider>
         </AnalyticsProvider>
-        </PinGateProvider>
         <Toaster position="bottom-center" richColors closeButton />
       </body>
     </html>

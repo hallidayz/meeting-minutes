@@ -143,6 +143,18 @@ impl DatabaseManager {
             fs::create_dir_all(&app_data_dir).map_err(|e| sqlx::Error::Io(e))?;
         }
 
+        // Replace any existing sqlite so legacy .db content can be migrated
+        for file_name in [
+            "meeting_minutes.sqlite",
+            "meeting_minutes.sqlite-wal",
+            "meeting_minutes.sqlite-shm",
+        ] {
+            let path = app_data_dir.join(file_name);
+            if path.exists() {
+                fs::remove_file(&path).map_err(|e| sqlx::Error::Io(e))?;
+            }
+        }
+
         // Copy legacy database to app data directory as meeting_minutes.db
         let target_legacy_path = app_data_dir.join("meeting_minutes.db");
         log::info!(

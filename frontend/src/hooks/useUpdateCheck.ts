@@ -38,9 +38,8 @@ export function useUpdateCheck(options: UseUpdateCheckOptions = {}) {
           });
         }
       }
-    } catch (error) {
-      console.error('Failed to check for updates:', error);
-      // Silently fail on startup checks to avoid disrupting user experience
+    } catch {
+      // Non-fatal: missing release feed or offline during startup check
     } finally {
       setIsChecking(false);
     }

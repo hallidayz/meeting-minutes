@@ -63,6 +63,12 @@ export const MODEL_CONFIGS: Record<string, Partial<ModelInfo>> = {
     accuracy: 'High',
     speed: 'Medium'
   },
+  'large-v3-turbo-q5_0': {
+    description: 'Quantized large-v3-turbo — recommended for Whisper.cpp max accuracy.',
+    size_mb: 574,
+    accuracy: 'High',
+    speed: 'Medium'
+  },
   'medium': {
     description: 'Balanced accuracy and speed. Good for most use cases.',
     size_mb: 1420,
@@ -146,6 +152,39 @@ export const MODEL_CONFIGS: Record<string, Partial<ModelInfo>> = {
     speed: 'Very Fast'
   }
 };
+
+export type SttModelTier = 'accurate' | 'fast';
+
+/** Models recommended for Whisper.cpp (BeamSearch / max accuracy). */
+export const ACCURATE_WHISPER_MODELS = new Set([
+  'large-v3-turbo-q5_0',
+  'large-v3-turbo',
+  'large-v3',
+  'large-v3-q5_0',
+  'medium-q5_0',
+  'medium',
+  'small-q5_0',
+  'small',
+]);
+
+/** Models recommended for Fast-Whisper (Greedy / lowest latency). */
+export const FAST_WHISPER_MODELS = new Set([
+  'base-q5_0',
+  'small-q5_0',
+  'tiny-q5_0',
+  'base',
+  'tiny',
+]);
+
+export function filterModelsByTier(models: ModelInfo[], tier: SttModelTier): ModelInfo[] {
+  const allowed = tier === 'accurate' ? ACCURATE_WHISPER_MODELS : FAST_WHISPER_MODELS;
+  const filtered = models.filter((m) => allowed.has(m.name));
+  return filtered.length > 0 ? filtered : models;
+}
+
+export function getRecommendedModelForTier(tier: SttModelTier): string {
+  return tier === 'accurate' ? 'large-v3-turbo-q5_0' : 'base-q5_0';
+}
 
 // Helper functions
 export function getModelIcon(accuracy: ModelAccuracy): string {

@@ -9,6 +9,13 @@ import { check, Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { getVersion } from '@tauri-apps/api/app';
 
+const isDevBuild = process.env.NODE_ENV === 'development';
+
+function isMissingReleaseFeedError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('Could not fetch a valid release JSON');
+}
+
 export interface UpdateInfo {
   available: boolean;
   currentVersion: string;
@@ -42,6 +49,13 @@ export class UpdateService {
     // Prevent concurrent update checks
     if (this.updateCheckInProgress) {
       throw new Error('Update check already in progress');
+    }
+
+    if (isDevBuild) {
+      return {
+        available: false,
+        currentVersion: await getVersion(),
+      };
     }
 
     // Skip if checked recently (unless forced)
@@ -78,7 +92,14 @@ export class UpdateService {
         currentVersion,
       };
     } catch (error) {
-      console.error('Failed to check for updates:', error);
+      if (isMissingReleaseFeedError(error)) {
+        console.debug('No published update feed found; skipping update check.');
+        return {
+          available: false,
+          currentVersion: await getVersion(),
+        };
+      }
+      console.warn('Failed to check for updates:', error);
       throw error;
     } finally {
       this.updateCheckInProgress = false;

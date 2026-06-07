@@ -20,7 +20,7 @@ fn derive_key(pin: &str, salt: &[u8]) -> Result<[u8; 32], String> {
 }
 
 fn parse_payload(bytes: &[u8]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), String> {
-    let is_new = bytes.len() >= MARKER.len() && bytes[..MARKER.len()] == MARKER;
+    let is_new = bytes.len() >= MARKER.len() && bytes[..MARKER.len()] == *MARKER;
     if is_new {
         let salt_start = MARKER.len();
         let iv_start = salt_start + SALT_LENGTH;
@@ -49,7 +49,7 @@ pub fn is_encrypted_payload(data: &str) -> bool {
     let Ok(bytes) = BASE64.decode(data) else {
         return false;
     };
-    bytes.len() >= MARKER.len() && bytes[..MARKER.len()] == MARKER
+    bytes.len() >= MARKER.len() && bytes[..MARKER.len()] == *MARKER
 }
 
 pub fn encrypt(plaintext: &str, pin: &str) -> Result<String, String> {

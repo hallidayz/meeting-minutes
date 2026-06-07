@@ -5,7 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { PermissionStatus, OnboardingPermissions } from '@/types/onboarding';
 
-const PARAKEET_MODEL = 'parakeet-tdt-0.6b-v3-int8';
+const DEFAULT_WHISPER_MODEL = 'large-v3-turbo-q5_0';
 
 interface OnboardingStatus {
   version: string;
@@ -25,7 +25,7 @@ interface SummaryModelProgressInfo {
   speedMbps: number;
 }
 
-interface ParakeetProgressInfo {
+interface WhisperProgressInfo {
   percent: number;
   downloadedMb: number;
   totalMb: number;
@@ -34,9 +34,10 @@ interface ParakeetProgressInfo {
 
 interface OnboardingContextType {
   currentStep: number;
-  parakeetDownloaded: boolean;
-  parakeetProgress: number;
-  parakeetProgressInfo: ParakeetProgressInfo;
+  whisperDownloaded: boolean;
+  whisperProgress: number;
+  whisperProgressInfo: WhisperProgressInfo;
+  whisperModel: string;
   summaryModelDownloaded: boolean;
   summaryModelProgress: number;
   summaryModelProgressInfo: SummaryModelProgressInfo;
@@ -51,7 +52,7 @@ interface OnboardingContextType {
   goNext: () => void;
   goPrevious: () => void;
   // Setters
-  setParakeetDownloaded: (value: boolean) => void;
+  setWhisperDownloaded: (value: boolean) => void;
   setSummaryModelDownloaded: (value: boolean) => void;
   setSelectedSummaryModel: (value: string) => void;
   setDatabaseExists: (value: boolean) => void;
@@ -59,7 +60,7 @@ interface OnboardingContextType {
   setPermissionsSkipped: (skipped: boolean) => void;
   completeOnboarding: () => Promise<void>;
   startBackgroundDownloads: (includeGemma: boolean) => Promise<void>;
-  retryParakeetDownload: () => Promise<void>;
+  retryWhisperDownload: () => Promise<void>;
 }
 
 const OnboardingContext = createContext<OnboardingContextType | undefined>(undefined);
@@ -67,9 +68,10 @@ const OnboardingContext = createContext<OnboardingContextType | undefined>(undef
 export function OnboardingProvider({ children }: { children: React.ReactNode }) {
   const [currentStep, setCurrentStep] = useState(1);
   const [completed, setCompleted] = useState(false);
-  const [parakeetDownloaded, setParakeetDownloaded] = useState(false);
-  const [parakeetProgress, setParakeetProgress] = useState(0);
-  const [parakeetProgressInfo, setParakeetProgressInfo] = useState<ParakeetProgressInfo>({
+  const [whisperDownloaded, setWhisperDownloaded] = useState(false);
+  const [whisperProgress, setWhisperProgress] = useState(0);
+  const [whisperModel, setWhisperModel] = useState<string>(DEFAULT_WHISPER_MODEL);
+  const [whisperProgressInfo, setWhisperProgressInfo] = useState<WhisperProgressInfo>({
     percent: 0,
     downloadedMb: 0,
     totalMb: 0,
@@ -117,23 +119,23 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
     fetchRecommendation();
   }, []);
 
-  // Initialize database silently in background (moved from SetupOverviewStep)
+  // Database is initialized during Rust app startup; only run manual legacy import if needed.
   const initializeDatabaseInBackground = async () => {
     try {
-      console.log('[OnboardingContext] Starting background database initialization');
+      console.log('[OnboardingContext] Checking database status');
       const isFirstLaunch = await invoke<boolean>('check_first_launch');
+      setDatabaseExists(!isFirstLaunch);
 
       if (!isFirstLaunch) {
-        console.log('[OnboardingContext] Database exists, skipping initialization');
-        setDatabaseExists(true);
+        console.log('[OnboardingContext] Database already initialized at startup');
         return;
       }
 
-      // First launch - attempt auto-detection and import
-      await performAutoDetection();
+      // Startup already created a fresh DB or imported legacy automatically.
+      console.log('[OnboardingContext] First launch database handled at startup');
+      setDatabaseExists(true);
     } catch (error) {
       console.error('[OnboardingContext] Database initialization failed:', error);
-      // Don't throw - database init failure shouldn't block onboarding
     }
   };
 
@@ -194,53 +196,56 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
     return () => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     };
-  }, [currentStep, parakeetDownloaded, summaryModelDownloaded, completed]);
+  }, [currentStep, whisperDownloaded, summaryModelDownloaded, completed]);
 
-  // Listen to Parakeet download progress
+  // Fetch recommended Whisper.cpp model for onboarding download
   useEffect(() => {
-    const unlisten = listen<{
-      modelName: string;
-      progress: number;
-      downloaded_mb?: number;
-      total_mb?: number;
-      speed_mbps?: number;
-      status?: string;
-    }>(
-      'parakeet-model-download-progress',
+    invoke<string>('whisper_get_recommended_model')
+      .then((model) => {
+        setWhisperModel(model);
+        setWhisperProgressInfo((prev) => ({
+          ...prev,
+          totalMb: model.includes('large-v3-turbo') ? 574 : model.includes('small') ? 280 : 85,
+        }));
+      })
+      .catch(() => setWhisperModel(DEFAULT_WHISPER_MODEL));
+  }, []);
+
+  // Listen to Whisper.cpp download progress
+  useEffect(() => {
+    const unlisten = listen<{ modelName: string; progress: number }>(
+      'model-download-progress',
       (event) => {
-        const { modelName, progress, downloaded_mb, total_mb, speed_mbps, status } = event.payload;
-        if (modelName === PARAKEET_MODEL) {
-          setParakeetProgress(progress);
-          setParakeetProgressInfo({
+        const { modelName, progress } = event.payload;
+        if (modelName === whisperModel) {
+          setWhisperProgress(progress);
+          setWhisperProgressInfo((prev) => ({
+            ...prev,
             percent: progress,
-            downloadedMb: downloaded_mb ?? 0,
-            totalMb: total_mb ?? 0,
-            speedMbps: speed_mbps ?? 0,
-          });
-          if (status === 'completed' || progress >= 100) {
-            setParakeetDownloaded(true);
+            downloadedMb: (prev.totalMb * progress) / 100,
+          }));
+          if (progress >= 100) {
+            setWhisperDownloaded(true);
           }
         }
       }
     );
 
     const unlistenComplete = listen<{ modelName: string }>(
-      'parakeet-model-download-complete',
+      'model-download-complete',
       (event) => {
-        const { modelName } = event.payload;
-        if (modelName === PARAKEET_MODEL) {
-          setParakeetDownloaded(true);
-          setParakeetProgress(100);
+        if (event.payload.modelName === whisperModel) {
+          setWhisperDownloaded(true);
+          setWhisperProgress(100);
         }
       }
     );
 
     const unlistenError = listen<{ modelName: string; error: string }>(
-      'parakeet-model-download-error',
+      'model-download-error',
       (event) => {
-        const { modelName } = event.payload;
-        if (modelName === PARAKEET_MODEL) {
-          console.error('Parakeet download error:', event.payload.error);
+        if (event.payload.modelName === whisperModel) {
+          console.error('Whisper download error:', event.payload.error);
         }
       }
     );
@@ -250,7 +255,7 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
       unlistenComplete.then(fn => fn());
       unlistenError.then(fn => fn());
     };
-  }, [selectedSummaryModel]);
+  }, [whisperModel]);
 
   // Listen to summary model (Built-in AI) download progress
   useEffect(() => {
@@ -308,7 +313,7 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
 
         setCurrentStep(verifiedStatus.currentStep);
         setCompleted(verifiedStatus.completed);
-        setParakeetDownloaded(verifiedStatus.parakeetDownloaded);
+        setWhisperDownloaded(verifiedStatus.whisperDownloaded);
         setSummaryModelDownloaded(verifiedStatus.summaryModelDownloaded);
 
         console.log('[OnboardingContext] Verified status:', verifiedStatus);
@@ -323,17 +328,16 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
 
   // Verify that models actually exist on disk, not just trust saved JSON
   const verifyModelStatus = async (savedStatus: OnboardingStatus) => {
-    let parakeetDownloaded = false;
+    let whisperDownloaded = false;
     let summaryModelDownloaded = false;
 
-    // Verify Parakeet model exists on disk
     try {
-      await invoke('parakeet_init');
-      parakeetDownloaded = await invoke<boolean>('parakeet_has_available_models');
-      console.log('[OnboardingContext] Parakeet verified on disk:', parakeetDownloaded);
+      await invoke('whisper_init');
+      whisperDownloaded = await invoke<boolean>('whisper_has_available_models');
+      console.log('[OnboardingContext] Whisper verified on disk:', whisperDownloaded);
     } catch (error) {
-      console.warn('[OnboardingContext] Failed to verify Parakeet:', error);
-      parakeetDownloaded = false;
+      console.warn('[OnboardingContext] Failed to verify Whisper:', error);
+      whisperDownloaded = false;
     }
 
     // Verify Summary model exists on disk - check if ANY model is available
@@ -362,7 +366,7 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
     return {
       currentStep,
       completed,
-      parakeetDownloaded,
+      whisperDownloaded,
       summaryModelDownloaded,
     };
   };
@@ -383,7 +387,7 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
           completed: completed,
           current_step: currentStep,
           model_status: {
-            parakeet: parakeetDownloaded ? 'downloaded' : 'not_downloaded',
+            parakeet: whisperDownloaded ? 'downloaded' : 'not_downloaded',
             summary: summaryModelDownloaded ? 'downloaded' : 'not_downloaded',
           },
           last_updated: new Date().toISOString(),
@@ -421,26 +425,24 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
     }
   };
 
-  // Start background downloads for models (parallel - Parakeet first, then Gemma immediately)
   const startBackgroundDownloads = async (includeGemma: boolean) => {
     console.log('[OnboardingContext] Starting background downloads, includeGemma:', includeGemma);
     setIsBackgroundDownloading(true);
 
     try {
-      // Start Parakeet download first (speech recognition - always required)
-      if (!parakeetDownloaded) {
-        console.log('[OnboardingContext] Starting Parakeet download');
-        invoke('parakeet_download_model', { modelName: PARAKEET_MODEL })
-          .catch(err => console.error('[OnboardingContext] Parakeet download failed:', err));
+      if (!whisperDownloaded) {
+        const modelToDownload = whisperModel || DEFAULT_WHISPER_MODEL;
+        console.log('[OnboardingContext] Starting Whisper.cpp download:', modelToDownload);
+        invoke('whisper_download_model', { modelName: modelToDownload })
+          .catch(err => console.error('[OnboardingContext] Whisper download failed:', err));
       }
 
-      // Start Gemma download after a delay to prioritize Parakeet bandwidth
       if (includeGemma && !summaryModelDownloaded) {
         setTimeout(() => {
-          console.log('[OnboardingContext] Starting Gemma download (delayed to prioritize Parakeet)');
+          console.log('[OnboardingContext] Starting summary model download (delayed)');
           invoke('builtin_ai_download_model', { modelName: selectedSummaryModel || 'gemma3:1b' })
-            .catch(err => console.error('[OnboardingContext] Gemma download failed:', err));
-        }, 3000); // 3 second delay to give Parakeet priority
+            .catch(err => console.error('[OnboardingContext] Summary download failed:', err));
+        }, 3000);
       }
     } catch (error) {
       console.error('[OnboardingContext] Failed to start background downloads:', error);
@@ -452,7 +454,7 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
   // Check if any models are currently downloading (for re-entry)
   const checkActiveDownloads = async () => {
     try {
-      const models = await invoke<any[]>('parakeet_get_available_models');
+      const models = await invoke<any[]>('whisper_get_available_models');
       const isDownloading = models.some(m => m.status && (typeof m.status === 'object' ? 'Downloading' in m.status : m.status === 'Downloading'));
       
       if (isDownloading) {
@@ -467,10 +469,10 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
     }
   };
 
-  const retryParakeetDownload = async () => {
-    console.log('[OnboardingContext] Retrying Parakeet download');
+  const retryWhisperDownload = async () => {
+    console.log('[OnboardingContext] Retrying Whisper download');
     try {
-      await invoke('parakeet_retry_download', { modelName: PARAKEET_MODEL });
+      await invoke('whisper_download_model', { modelName: whisperModel || DEFAULT_WHISPER_MODEL });
     } catch (error) {
       console.error('[OnboardingContext] Retry failed:', error);
       throw error;
@@ -508,9 +510,10 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
     <OnboardingContext.Provider
       value={{
         currentStep,
-        parakeetDownloaded,
-        parakeetProgress,
-        parakeetProgressInfo,
+        whisperDownloaded,
+        whisperProgress,
+        whisperProgressInfo,
+        whisperModel,
         summaryModelDownloaded,
         summaryModelProgress,
         summaryModelProgressInfo,
@@ -522,7 +525,7 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
         goToStep,
         goNext,
         goPrevious,
-        setParakeetDownloaded,
+        setWhisperDownloaded,
         setSummaryModelDownloaded,
         setSelectedSummaryModel,
         setDatabaseExists,
@@ -530,7 +533,7 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
         setPermissionsSkipped,
         completeOnboarding,
         startBackgroundDownloads,
-        retryParakeetDownload,
+        retryWhisperDownload,
       }}
     >
       {children}

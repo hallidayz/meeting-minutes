@@ -24,7 +24,7 @@ pub struct SaveTranscriptConfigRequest {
 
 pub struct SettingsRepository;
 
-// Transcript providers: localWhisper, deepgram, elevenLabs, groq, openai
+// Transcript providers: localWhisper, fastWhisper, deepgram, elevenLabs, groq, openai
 // Summary providers: openai, claude, ollama, groq, added openrouter
 // NOTE: Handle data exclusion in the higher layer as this is database abstraction layer(using SELECT *)
 
@@ -178,7 +178,7 @@ impl SettingsRepository {
         api_key: &str,
     ) -> std::result::Result<(), sqlx::Error> {
         let api_key_column = match provider {
-            "localWhisper" => "whisperApiKey",
+            "localWhisper" | "fastWhisper" => "whisperApiKey",
             "parakeet" => return Ok(()), // Parakeet doesn't need an API key, return early
             "deepgram" => "deepgramApiKey",
             "elevenLabs" => "elevenLabsApiKey",
@@ -210,7 +210,7 @@ impl SettingsRepository {
         provider: &str,
     ) -> std::result::Result<Option<String>, sqlx::Error> {
         let api_key_column = match provider {
-            "localWhisper" => "whisperApiKey",
+            "localWhisper" | "fastWhisper" => "whisperApiKey",
             "parakeet" => return Ok(None), // Parakeet doesn't need an API key
             "deepgram" => "deepgramApiKey",
             "elevenLabs" => "elevenLabsApiKey",

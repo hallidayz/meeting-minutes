@@ -36,6 +36,22 @@ fn get_models_directory() -> Option<PathBuf> {
     MODELS_DIR.lock().unwrap().clone()
 }
 
+/// Recommended Whisper.cpp model based on platform RAM (Metal-accelerated on macOS).
+#[command]
+pub async fn whisper_get_recommended_model() -> Result<String, String> {
+    let model = crate::whisper_engine::recommended_whisper_model();
+    log::info!("Recommended Whisper.cpp model: {}", model);
+    Ok(model.to_string())
+}
+
+/// Recommended Fast-Whisper model (smaller quantized GGML for speed).
+#[command]
+pub async fn whisper_get_recommended_fast_model() -> Result<String, String> {
+    let model = crate::whisper_engine::recommended_fast_whisper_model();
+    log::info!("Recommended Fast-Whisper model: {}", model);
+    Ok(model.to_string())
+}
+
 #[command]
 pub async fn whisper_init() -> Result<(), String> {
     let mut guard = WHISPER_ENGINE.lock().unwrap();
@@ -252,12 +268,19 @@ pub async fn whisper_validate_model_ready_with_config<R: tauri::Runtime>(
                     config.provider,
                     config.model
                 );
-                if config.provider == "localWhisper" && !config.model.is_empty() {
+                if crate::whisper_engine::is_whisper_rs_provider(&config.provider)
+                    && !config.model.is_empty()
+                {
+                    engine
+                        .set_stt_profile(crate::whisper_engine::SttProfile::from_provider(
+                            &config.provider,
+                        ))
+                        .await;
                     log::info!("Using user's configured model: {}", config.model);
                     Some(config.model)
                 } else {
                     log::info!(
-                        "API config uses non-local provider ({}) or empty model, will auto-select",
+                        "API config uses non-whisper provider ({}) or empty model, will auto-select",
                         config.provider
                     );
                     None

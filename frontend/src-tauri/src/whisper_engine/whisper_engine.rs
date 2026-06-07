@@ -4,13 +4,55 @@ use std::path::{PathBuf};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use whisper_rs::{WhisperContext, WhisperContextParameters, FullParams, SamplingStrategy};
+use whisper_rs::{WhisperContext, WhisperContextParameters};
 use serde::{Serialize, Deserialize};
 use anyhow::{Result, anyhow};
 use reqwest::Client;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use crate::{perf_debug, perf_trace};
+
+/// Default on-device STT provider (Whisper.cpp via whisper-rs)
+pub const DEFAULT_TRANSCRIPT_PROVIDER: &str = "localWhisper";
+
+/// Fast-Whisper default model: smaller quantized GGML for lowest latency.
+pub fn recommended_fast_whisper_model() -> &'static str {
+    use sysinfo::System;
+
+    let mut sys = System::new_all();
+    sys.refresh_memory();
+    let ram_gb = sys.total_memory() / (1024 * 1024 * 1024);
+
+    if ram_gb >= 8 {
+        "small-q5_0"
+    } else {
+        "base-q5_0"
+    }
+}
+
+/// Pick the best Whisper.cpp model for this machine: quantized large-v3-turbo on capable
+/// hardware (especially Apple Silicon with Metal), stepping down on low RAM.
+pub fn recommended_whisper_model() -> &'static str {
+    use sysinfo::System;
+
+    let mut sys = System::new_all();
+    sys.refresh_memory();
+    let ram_gb = sys.total_memory() / (1024 * 1024 * 1024);
+
+    if cfg!(target_os = "macos") {
+        if ram_gb >= 8 {
+            "large-v3-turbo-q5_0"
+        } else {
+            "base-q5_0"
+        }
+    } else if ram_gb >= 16 {
+        "large-v3-turbo-q5_0"
+    } else if ram_gb >= 8 {
+        "small-q5_0"
+    } else {
+        "base-q5_0"
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ModelStatus {
@@ -46,6 +88,8 @@ pub struct WhisperEngine {
     cancel_download_flag: Arc<RwLock<Option<String>>>, // Model name being cancelled
     // Active downloads tracking to prevent concurrent downloads
     active_downloads: Arc<RwLock<HashSet<String>>>, // Set of models currently being downloaded
+    /// Inference profile (Whisper.cpp accurate vs Fast-Whisper greedy).
+    stt_profile: Arc<RwLock<crate::whisper_engine::SttProfile>>,
 }
 
 impl WhisperEngine {
@@ -161,9 +205,19 @@ impl WhisperEngine {
             cancel_download_flag: Arc::new(RwLock::new(None)),
             // Initialize active downloads tracking
             active_downloads: Arc::new(RwLock::new(HashSet::new())),
+            stt_profile: Arc::new(RwLock::new(crate::whisper_engine::SttProfile::default())),
         };
         
         Ok(engine)
+    }
+
+    pub async fn set_stt_profile(&self, profile: crate::whisper_engine::SttProfile) {
+        *self.stt_profile.write().await = profile;
+        log::info!("STT profile set to: {}", profile.label());
+    }
+
+    pub async fn get_stt_profile(&self) -> crate::whisper_engine::SttProfile {
+        *self.stt_profile.read().await
     }
     
     pub async fn discover_models(&self) -> Result<Vec<ModelInfo>> {
@@ -319,7 +373,7 @@ impl WhisperEngine {
                     // let _suppressor = crate::whisper_engine::StderrSuppressor::new();
 
                     // Load whisper context with hardware-optimized parameters
-                    WhisperContext::new_with_params(&model_info.path.to_string_lossy(), context_param)
+                    WhisperContext::new_with_params(&model_info.path, context_param)
                         .map_err(|e| anyhow!("Failed to load model {}: {}", model_name, e))?
                     // Suppressor dropped here, stderr restored
                 };
@@ -535,60 +589,8 @@ impl WhisperEngine {
         let ctx = ctx_lock.as_ref()
             .ok_or_else(|| anyhow!("No model loaded. Please load a model first."))?;
 
-        // Get adaptive configuration based on hardware
-        let hardware_profile = crate::audio::HardwareProfile::detect();
-        let adaptive_config = hardware_profile.get_whisper_config();
-
-        // ADAPTIVE parameters - optimized for current hardware
-        let mut params = FullParams::new(SamplingStrategy::BeamSearch {
-            beam_size: adaptive_config.beam_size as i32,
-            patience: 1.0
-        });
-
-        // Configure with adaptive settings
-        // If language is "auto" or None, use automatic language detection (pass None)
-        // If language is "auto-translate", enable translation to English
-        // Otherwise, use the specified language code
-        let (language_code, should_translate) = match language.as_deref() {
-            Some("auto") | None => (None, false),
-            Some("auto-translate") => (None, true),
-            Some(lang) => (Some(lang), false),
-        };
-        params.set_language(language_code);
-        params.set_translate(should_translate);
-
-        // CRITICAL: Disable timestamp tokens to prevent whisper.cpp chunking heuristics
-        // The "single timestamp ending - skip entire chunk" optimization incorrectly discards
-        // complete, valid transcriptions. Disabling timestamps forces whisper to return ALL text.
-        params.set_no_timestamps(true);     // Prevent timestamp-based segment skipping
-        params.set_token_timestamps(true);  // Keep for any timestamp-aware features
-
-        // PERFORMANCE: Disable ALL whisper.cpp internal printing
-        // This reduces C library log spam significantly
-        params.set_print_special(false);      // Don't print special tokens
-        params.set_print_progress(false);     // Don't print progress
-        params.set_print_realtime(false);     // Don't print realtime info
-        params.set_print_timestamps(false);   // Don't print timestamps
-
-        // Additional suppression to reduce C library verbosity
-        params.set_suppress_blank(true);
-        params.set_suppress_non_speech_tokens(true);
-        params.set_temperature(adaptive_config.temperature);
-        params.set_max_initial_ts(1.0);
-        params.set_entropy_thold(2.4);
-        params.set_logprob_thold(-1.0);
-        // BALANCED FIX: Lowered from 0.75 to 0.55 to allow quiet speech detection
-        // Previous value was too aggressive and rejected valid quiet speech
-        // 0.55 is balanced - prevents hallucinations while preserving quiet speech
-        params.set_no_speech_thold(0.55);
-        params.set_max_len(200);
-        params.set_single_segment(false);
-
-        // Set thread count based on hardware (if supported by whisper.cpp)
-        if let Some(_max_threads) = adaptive_config.max_threads {
-            // Note: whisper.cpp may or may not expose thread control through params
-            // Removed debug log to reduce I/O overhead in transcription hot path
-        }
+        let profile = *self.stt_profile.read().await;
+        let params = crate::whisper_engine::build_full_params(profile, language.as_deref());
 
         let duration_seconds = audio_data.len() as f64 / 16000.0;
         let is_partial = duration_seconds < 15.0; // Consider chunks under 15s as partial
@@ -609,11 +611,13 @@ impl WhisperEngine {
         let mut total_confidence = 0.0;
         let mut segment_count = 0;
 
-        let num_segments = num_segments?;
         for i in 0..num_segments {
-            let segment_text = match state.full_get_segment_text_lossy(i) {
-                Ok(text) => text,
-                Err(_) => continue,
+            let segment_text = match state.get_segment(i) {
+                Some(seg) => match seg.to_str_lossy() {
+                    Ok(text) => text.to_string(),
+                    Err(_) => continue,
+                },
+                None => continue,
             };
 
             // Calculate confidence based on segment length and duration (simplified approach)
@@ -652,59 +656,9 @@ impl WhisperEngine {
         let ctx = ctx_lock.as_ref()
             .ok_or_else(|| anyhow!("No model loaded. Please load a model first."))?;
 
-        // Get adaptive configuration based on hardware
-        let hardware_profile = crate::audio::HardwareProfile::detect();
-        let adaptive_config = hardware_profile.get_whisper_config();
+        let profile = *self.stt_profile.read().await;
+        let params = crate::whisper_engine::build_full_params(profile, language.as_deref());
 
-        // ADAPTIVE parameters - optimized for current hardware
-        let mut params = FullParams::new(SamplingStrategy::BeamSearch {
-            beam_size: adaptive_config.beam_size as i32,
-            patience: 1.0
-        });
-
-        // Configure for good quality
-        // If language is "auto" or None, use automatic language detection (pass None)
-        // If language is "auto-translate", enable translation to English
-        // Otherwise, use the specified language code
-        let (language_code, should_translate) = match language.as_deref() {
-            Some("auto") | None => (None, false),
-            Some("auto-translate") => (None, true),
-            Some(lang) => (Some(lang), false),
-        };
-        params.set_language(language_code);
-        params.set_translate(should_translate);
-
-        // CRITICAL: Disable timestamp tokens to prevent whisper.cpp chunking heuristics
-        // The "single timestamp ending - skip entire chunk" optimization incorrectly discards
-        // complete, valid transcriptions. Disabling timestamps forces whisper to return ALL text.
-        params.set_no_timestamps(true);     // Prevent timestamp-based segment skipping
-        params.set_token_timestamps(true);  // Keep for any timestamp-aware features
-
-        params.set_print_special(false);
-        params.set_print_progress(false);
-        params.set_print_realtime(false);
-        params.set_print_timestamps(false);
-
-        // BALANCED settings - good quality with reasonable speed
-        params.set_suppress_blank(true);
-        params.set_suppress_non_speech_tokens(true);
-        params.set_temperature(0.3);             // Lower than 0.4 for consistency, higher than 0.0 for quality
-        params.set_max_initial_ts(1.0);
-        params.set_entropy_thold(2.4);
-        params.set_logprob_thold(-1.0);
-        // BALANCED FIX: Lowered from 0.75 to 0.55 to allow quiet speech detection
-        // Previous value was too aggressive and rejected valid quiet speech
-        // 0.55 is balanced - prevents hallucinations while preserving quiet speech
-        params.set_no_speech_thold(0.55);
-
-        // Reasonable length limits
-        params.set_max_len(200);                 // Reasonable length
-        params.set_single_segment(false);        // Allow multiple segments for better accuracy
-
-        // Note: compression_ratio_threshold would be ideal but not available in current whisper-rs
-        // This would help detect repetitive outputs: params.set_compression_ratio_threshold(2.4);
-
-        // Duration-based optimization is handled by beam search parameters
         let duration_seconds = audio_data.len() as f64 / 16000.0; // Assuming 16kHz
         let is_short_audio = duration_seconds < 1.0;
 
@@ -757,7 +711,7 @@ impl WhisperEngine {
         state.full(params, &audio_data)?;
 
         // Extract text with improved segment handling
-        let num_segments = state.full_n_segments()?;
+        let num_segments = state.full_n_segments();
 
         // Performance optimization: reduce segment completion logging
         // Only log for significant transcriptions to avoid I/O overhead
@@ -767,13 +721,13 @@ impl WhisperEngine {
         let mut result = String::new();
 
         for i in 0..num_segments {
-            let segment_text = match state.full_get_segment_text_lossy(i) {
-                Ok(text) => text,
-                Err(_) => continue,
+            let (segment_text, _start_time, _end_time) = match state.get_segment(i) {
+                Some(seg) => match seg.to_str_lossy() {
+                    Ok(text) => (text, seg.start_timestamp(), seg.end_timestamp()),
+                    Err(_) => continue,
+                },
+                None => continue,
             };
-
-            let _start_time = state.full_get_segment_t0(i).unwrap_or(0);
-            let _end_time = state.full_get_segment_t1(i).unwrap_or(0);
 
             // Performance optimization: remove per-segment debug logging
             // This was causing significant I/O overhead during transcription
@@ -945,9 +899,11 @@ impl WhisperEngine {
             "large-v3-turbo" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
             "large-v3" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin",
             
+            "tiny-q5_0" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny-q5_0.bin",
+            "base-q5_0" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_0.bin",
             "small-q5_0" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_0.bin",
             "medium-q5_0" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium-q5_0.bin",
-            "large-v3-turbo-q5_0" => "https://huggingface.co/ggerganov/whisper.cpp/blob/main/ggml-large-v3-turbo-q5_0.bin",
+            "large-v3-turbo-q5_0" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
             "large-v3-q5_0" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin",
             // Quantized int8 models
             

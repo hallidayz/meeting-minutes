@@ -16,15 +16,21 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   const [isMac, setIsMac] = React.useState(false);
 
   useEffect(() => {
-    // Check if running on macOS
     const checkPlatform = async () => {
+      const isTauri =
+        typeof window !== 'undefined' &&
+        ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
+
+      if (!isTauri) {
+        setIsMac(navigator.userAgent.includes('Mac'));
+        return;
+      }
+
       try {
-        // Dynamic import to avoid SSR issues if any
         const { platform } = await import('@tauri-apps/plugin-os');
         setIsMac(platform() === 'macos');
       } catch (e) {
-        console.error('Failed to detect platform:', e);
-        // Fallback
+        console.warn('Failed to detect platform via Tauri plugin, using user agent:', e);
         setIsMac(navigator.userAgent.includes('Mac'));
       }
     };
@@ -34,7 +40,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   // 4-Step Onboarding Flow (System-Recommended Models):
   // Step 1: Welcome - Introduce AI Guardian features
   // Step 2: Setup Overview - Database initialization + show recommended downloads
-  // Step 3: Download Progress - Download Parakeet + Gemma (auto-selected based on RAM)
+  // Step 3: Download Progress - Download Whisper.cpp + Gemma (auto-selected based on RAM)
   // Step 4: Permissions - Request mic + system audio (macOS only)
 
   return (

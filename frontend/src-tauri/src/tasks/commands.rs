@@ -36,10 +36,10 @@ pub async fn update_task(
         state.db_manager.pool(),
         &request.id,
         request.title.as_deref(),
-        request.due_date.as_ref().map(|d| d.as_deref()),
+        request.due_date.as_ref().map(|d| Some(d.as_str())),
         request.priority.as_deref(),
         request.status.as_deref(),
-        request.meeting_id.as_ref().map(|m| m.as_deref()),
+        request.meeting_id.as_ref().map(|m| Some(m.as_str())),
     )
     .await
     .map_err(|e| e.to_string())
