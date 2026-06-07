@@ -11,6 +11,9 @@ import { PreferenceSettings } from '@/components/PreferenceSettings';
 import { SummaryModelSettings } from '@/components/SummaryModelSettings';
 import { useConfig } from '@/contexts/ConfigContext';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { IndustrySettings } from '@/components/IndustrySettings';
+import { ImportAiNotes } from '@/components/ImportAiNotes';
+import { BRAND } from '@/config/branding';
 
 // Tabs configuration (constant)
 const TABS = [
@@ -107,7 +110,9 @@ export default function SettingsPage() {
               />
             </TabsList>
 
-            <TabsContent value="general">
+            <TabsContent value="general" className="space-y-8">
+              <IndustrySettings />
+              <ImportAiNotes />
               <PreferenceSettings />
             </TabsContent>
             <TabsContent value="recording">

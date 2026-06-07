@@ -928,6 +928,22 @@ pub async fn api_save_meeting_title<R: Runtime>(
 }
 
 #[tauri::command]
+pub async fn api_save_transcript_speaker<R: Runtime>(
+    _app: AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    segment_id: String,
+    speaker: String,
+) -> Result<(), String> {
+    sqlx::query("UPDATE transcripts SET speaker = ? WHERE id = ?")
+        .bind(&speaker)
+        .bind(&segment_id)
+        .execute(state.db_manager.pool())
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn api_save_transcript<R: Runtime>(
     _app: AppHandle<R>,
     state: tauri::State<'_, AppState>,

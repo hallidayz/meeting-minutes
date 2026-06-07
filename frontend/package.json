@@ -1,11 +1,11 @@
 {
-    "name": "meetily",
-    "version": "0.2.0",
+    "name": "ai-guardian",
+    "version": "0.1.0",
     "private": true,
     "main": "electron/main.js",
     "scripts": {
-        "dev": "next dev -p 3118",
-        "build": "next build",
+        "dev": "next dev -p 3118 --webpack",
+        "build": "next build --webpack",
         "export": "next export",
         "start": "next start -p 3118",
         "tauri": "tauri",
@@ -28,9 +28,9 @@
         "lint": "next lint"
     },
     "dependencies": {
-        "@blocknote/core": "0.36.0",
-        "@blocknote/react": "0.36.0",
-        "@blocknote/shadcn": "0.36.0",
+        "@blocknote/core": "^0.51.4",
+        "@blocknote/react": "^0.51.4",
+        "@blocknote/shadcn": "^0.51.4",
         "@heroicons/react": "^2.2.0",
         "@hookform/resolvers": "^5.1.1",
         "@radix-ui/react-accordion": "^1.2.12",
@@ -72,7 +72,7 @@
         "framer-motion": "^11.15.0",
         "lodash": "^4.17.21",
         "lucide-react": "^0.469.0",
-        "next": "^14.2.25",
+        "next": "^16.2.7",
         "radix-ui": "^1.4.3",
         "react": "^18.2.0",
         "react-dom": "^18.2.0",

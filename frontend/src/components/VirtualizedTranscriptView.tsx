@@ -34,6 +34,10 @@ export interface VirtualizedTranscriptViewProps {
     totalCount?: number;
     loadedCount?: number;
     onLoadMore?: () => void;
+
+    /** Enable editable speaker labels (meeting details) */
+    editableSpeakers?: boolean;
+    onSpeakerRename?: (segmentId: string, newSpeaker: string) => void;
 }
 
 // Threshold for enabling virtualization (below this, use simple rendering)
@@ -71,6 +75,9 @@ const TranscriptSegment = memo(function TranscriptSegment({
     confidence,
     isStreaming,
     showConfidence,
+    speaker,
+    editableSpeakers,
+    onSpeakerRename,
 }: {
     id: string;
     timestamp: number;
@@ -78,7 +85,12 @@ const TranscriptSegment = memo(function TranscriptSegment({
     confidence?: number;
     isStreaming: boolean;
     showConfidence: boolean;
+    speaker?: string;
+    editableSpeakers?: boolean;
+    onSpeakerRename?: (segmentId: string, newSpeaker: string) => void;
 }) {
+    const [editing, setEditing] = useState(false);
+    const [speakerName, setSpeakerName] = useState(speaker || 'Speaker');
     const displayText = cleanStopWords(text) || (text.trim() === '' ? '[Silence]' : text);
 
     return (
@@ -97,6 +109,34 @@ const TranscriptSegment = memo(function TranscriptSegment({
                     </TooltipContent>
                 </Tooltip>
                 <div className="flex-1">
+                    {speaker && (
+                        editableSpeakers && editing ? (
+                            <input
+                                className="text-xs font-semibold text-brand-primary mb-1 border rounded px-1"
+                                value={speakerName}
+                                onChange={(e) => setSpeakerName(e.target.value)}
+                                onBlur={() => {
+                                    onSpeakerRename?.(id, speakerName);
+                                    setEditing(false);
+                                }}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        onSpeakerRename?.(id, speakerName);
+                                        setEditing(false);
+                                    }
+                                }}
+                                autoFocus
+                            />
+                        ) : (
+                            <button
+                                type="button"
+                                className="text-xs font-semibold text-brand-primary mb-1 hover:underline"
+                                onClick={() => editableSpeakers && setEditing(true)}
+                            >
+                                {speakerName}:
+                            </button>
+                        )
+                    )}
                     {isStreaming ? (
                         <div className="bg-gray-100 border border-gray-200 rounded-lg px-3 py-2">
                             <p className="text-base text-gray-800 leading-relaxed">{displayText}</p>
@@ -124,6 +164,8 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     totalCount = 0,
     loadedCount = 0,
     onLoadMore,
+    editableSpeakers = false,
+    onSpeakerRename,
 }) => {
     // Create scroll ref first - shared between virtualizer and auto-scroll hook
     const scrollRef = useRef<HTMLDivElement>(null);
@@ -257,7 +299,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                         </>
                     ) : (
                         <>
-                            <p className="text-lg font-semibold">Welcome to meetily!</p>
+                            <p className="text-lg font-semibold">Welcome to ai-guardian!</p>
                             <p className="text-xs mt-1">Start recording to see live transcription</p>
                         </>
                     )}
@@ -296,6 +338,9 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         confidence={segment.confidence}
                                         isStreaming={isStreaming}
                                         showConfidence={showConfidence}
+                                        speaker={segment.speaker}
+                                        editableSpeakers={editableSpeakers}
+                                        onSpeakerRename={onSpeakerRename}
                                     />
                                 </div>
                             );
@@ -352,6 +397,9 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         confidence={segment.confidence}
                                         isStreaming={isStreaming}
                                         showConfidence={showConfidence}
+                                        speaker={segment.speaker}
+                                        editableSpeakers={editableSpeakers}
+                                        onSpeakerRename={onSpeakerRename}
                                     />
                                 </motion.div>
                             );

@@ -32,14 +32,22 @@ rm -rf out
 echo "Installing dependencies..."
 pnpm install
 
-# Build the Next.js application first
-echo "Building Next.js application..."
-pnpm run build
+echo "Building llama-helper sidecar..."
+TAURI_GPU_FEATURE=${TAURI_GPU_FEATURE:-$(node scripts/auto-detect-gpu.js)}
+LLAMA_FEATURES=""
+if [ -n "$TAURI_GPU_FEATURE" ] && [ "$TAURI_GPU_FEATURE" != "none" ]; then
+    LLAMA_FEATURE="$TAURI_GPU_FEATURE"
+    if [ "$LLAMA_FEATURE" = "coreml" ]; then
+        LLAMA_FEATURE="metal"
+    fi
+    LLAMA_FEATURES="--features $LLAMA_FEATURE"
+fi
+cargo build -p llama-helper $LLAMA_FEATURES
+TARGET_TRIPLE=$(rustc -vV | grep "host:" | awk '{print $2}')
+mkdir -p src-tauri/binaries
+cp "../target/debug/llama-helper" "src-tauri/binaries/llama-helper-$TARGET_TRIPLE"
 
-# Set environment variables for the build
-echo "Setting up build environment..."
-
-echo "Building Tauri app..."
-pnpm run tauri dev
+echo "Starting Tauri dev (Next.js dev server starts automatically)..."
+pnpm run tauri:dev
 sleep
 

@@ -3,6 +3,7 @@ import Image from "next/image";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "./ui/dialog";
 import { VisuallyHidden } from "./ui/visually-hidden";
 import { About } from "./About";
+import { BRAND } from "@/config/branding";
 
 interface LogoProps {
     isCollapsed: boolean;
@@ -14,19 +15,24 @@ const Logo = React.forwardRef<HTMLButtonElement, LogoProps>(({ isCollapsed }, re
       {isCollapsed ? (
         <DialogTrigger asChild>
           <button ref={ref} className="flex items-center justify-start mb-2 cursor-pointer bg-transparent border-none p-0 hover:opacity-80 transition-opacity">
-            <Image src="/logo-collapsed.png" alt="Logo" width={40} height={32} />
+            <Image src="/brand/logo.png" alt={BRAND.name} width={40} height={40} className="rounded" />
           </button>
         </DialogTrigger>
       ) : (
         <DialogTrigger asChild>
-          <span className="text-lg text-center border rounded-full bg-blue-50 border-white font-semibold text-gray-700 mb-2 block items-center cursor-pointer hover:opacity-80 transition-opacity">
-            <span>Meetily</span>
-          </span>
+          <button
+            ref={ref}
+            type="button"
+            className="flex flex-col items-start gap-1 mb-2 cursor-pointer bg-transparent border-none p-0 hover:opacity-90 transition-opacity text-left"
+          >
+            <Image src="/brand/logo.png" alt={BRAND.name} width={120} height={48} className="rounded" />
+            <span className="text-xs tracking-widest text-brand-primary font-semibold">{BRAND.taglinePrimary}</span>
+          </button>
         </DialogTrigger>
       )}
       <DialogContent>
         <VisuallyHidden>
-          <DialogTitle>About Meetily</DialogTitle>
+          <DialogTitle>About {BRAND.shortName}</DialogTitle>
         </VisuallyHidden>
         <About />
       </DialogContent>

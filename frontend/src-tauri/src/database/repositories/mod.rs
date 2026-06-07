@@ -1,3 +1,4 @@
+pub mod app_settings;
 pub mod meeting;
 pub mod setting;
 pub mod summary;

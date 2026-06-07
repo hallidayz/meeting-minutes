@@ -12,9 +12,14 @@ export default {
         background: "var(--background)",
         foreground: "var(--foreground)",
         // Consistent color palette
-        primary: "hsl(221, 83%, 53%)", // blue-600
-        secondary: "hsl(210, 40%, 96%)", // gray-50
-        accent: "hsl(221, 83%, 53%)", // blue-600
+        brand: {
+          primary: "#02295b",
+          accent: "#fda700",
+          background: "#d6d6d6",
+        },
+        primary: "#02295b",
+        secondary: "#fda700",
+        accent: "#fda700",
         destructive: "hsl(0, 84%, 60%)", // red-500
       },
       fontSize: {

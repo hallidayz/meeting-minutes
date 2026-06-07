@@ -6,6 +6,8 @@ import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import Analytics from '@/lib/analytics';
 import { TranscriptPanel } from '@/components/MeetingDetails/TranscriptPanel';
 import { SummaryPanel } from '@/components/MeetingDetails/SummaryPanel';
+import { MeetingTasksPanel } from '@/components/MeetingDetails/MeetingTasksPanel';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 // Custom hooks
 import { useMeetingData } from '@/hooks/meeting-details/useMeetingData';
@@ -49,6 +51,7 @@ export default function PageContent({
   });
 
   // State
+  const [activeTab, setActiveTab] = useState('transcript');
   const [customPrompt, setCustomPrompt] = useState<string>('');
   const [isRecording] = useState(false);
   const [summaryResponse] = useState<SummaryResponse | null>(null);
@@ -149,60 +152,78 @@ export default function PageContent({
       transition={{ duration: 0.3, ease: 'easeOut' }}
       className="flex flex-col h-screen bg-gray-50"
     >
-      <div className="flex flex-1 overflow-hidden">
-        <TranscriptPanel
-          transcripts={meetingData.transcripts}
-          customPrompt={customPrompt}
-          onPromptChange={setCustomPrompt}
-          onCopyTranscript={copyOperations.handleCopyTranscript}
-          onOpenMeetingFolder={meetingOperations.handleOpenMeetingFolder}
-          isRecording={isRecording}
-          disableAutoScroll={true}
-          // Pagination props for efficient loading
-          usePagination={true}
-          segments={segments}
-          hasMore={hasMore}
-          isLoadingMore={isLoadingMore}
-          totalCount={totalCount}
-          loadedCount={loadedCount}
-          onLoadMore={onLoadMore}
-        />
-        <SummaryPanel
-          meeting={meeting}
-          meetingTitle={meetingData.meetingTitle}
-          onTitleChange={meetingData.handleTitleChange}
-          isEditingTitle={meetingData.isEditingTitle}
-          onStartEditTitle={() => meetingData.setIsEditingTitle(true)}
-          onFinishEditTitle={() => meetingData.setIsEditingTitle(false)}
-          isTitleDirty={meetingData.isTitleDirty}
-          summaryRef={meetingData.blockNoteSummaryRef}
-          isSaving={meetingData.isSaving}
-          onSaveAll={meetingData.saveAllChanges}
-          onCopySummary={copyOperations.handleCopySummary}
-          onOpenFolder={meetingOperations.handleOpenMeetingFolder}
-          aiSummary={meetingData.aiSummary}
-          summaryStatus={summaryGeneration.summaryStatus}
-          transcripts={meetingData.transcripts}
-          modelConfig={modelConfig}
-          setModelConfig={setModelConfig}
-          onSaveModelConfig={handleSaveModelConfig}
-          onGenerateSummary={summaryGeneration.handleGenerateSummary}
-          onStopGeneration={summaryGeneration.handleStopGeneration}
-          customPrompt={customPrompt}
-          summaryResponse={summaryResponse}
-          onSaveSummary={meetingData.handleSaveSummary}
-          onSummaryChange={meetingData.handleSummaryChange}
-          onDirtyChange={meetingData.setIsSummaryDirty}
-          summaryError={summaryGeneration.summaryError}
-          onRegenerateSummary={summaryGeneration.handleRegenerateSummary}
-          getSummaryStatusMessage={summaryGeneration.getSummaryStatusMessage}
-          availableTemplates={templates.availableTemplates}
-          selectedTemplate={templates.selectedTemplate}
-          onTemplateSelect={templates.handleTemplateSelection}
-          isModelConfigLoading={false}
-          onOpenModelSettings={handleRegisterModalOpen}
-        />
-      </div>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-1 overflow-hidden flex-col">
+        <div className="px-4 pt-2 border-b bg-white">
+          <TabsList>
+            <TabsTrigger value="transcript">Transcript</TabsTrigger>
+            <TabsTrigger value="summary">Summary</TabsTrigger>
+            <TabsTrigger value="tasks">Tasks</TabsTrigger>
+          </TabsList>
+        </div>
+        <div className="flex flex-1 overflow-hidden">
+          <TabsContent value="transcript" className="flex flex-1 overflow-hidden m-0 data-[state=inactive]:hidden">
+            <TranscriptPanel
+              transcripts={meetingData.transcripts}
+              customPrompt={customPrompt}
+              onPromptChange={setCustomPrompt}
+              onCopyTranscript={copyOperations.handleCopyTranscript}
+              onOpenMeetingFolder={meetingOperations.handleOpenMeetingFolder}
+              isRecording={isRecording}
+              disableAutoScroll={true}
+              usePagination={true}
+              segments={segments}
+              hasMore={hasMore}
+              isLoadingMore={isLoadingMore}
+              totalCount={totalCount}
+              loadedCount={loadedCount}
+              onLoadMore={onLoadMore}
+            />
+          </TabsContent>
+          <TabsContent value="summary" className="flex flex-1 overflow-hidden m-0 data-[state=inactive]:hidden">
+            <SummaryPanel
+              meeting={meeting}
+              meetingTitle={meetingData.meetingTitle}
+              onTitleChange={meetingData.handleTitleChange}
+              isEditingTitle={meetingData.isEditingTitle}
+              onStartEditTitle={() => meetingData.setIsEditingTitle(true)}
+              onFinishEditTitle={() => meetingData.setIsEditingTitle(false)}
+              isTitleDirty={meetingData.isTitleDirty}
+              summaryRef={meetingData.blockNoteSummaryRef}
+              isSaving={meetingData.isSaving}
+              onSaveAll={meetingData.saveAllChanges}
+              onCopySummary={copyOperations.handleCopySummary}
+              onOpenFolder={meetingOperations.handleOpenMeetingFolder}
+              aiSummary={meetingData.aiSummary}
+              summaryStatus={summaryGeneration.summaryStatus}
+              transcripts={meetingData.transcripts}
+              modelConfig={modelConfig}
+              setModelConfig={setModelConfig}
+              onSaveModelConfig={handleSaveModelConfig}
+              onGenerateSummary={summaryGeneration.handleGenerateSummary}
+              onStopGeneration={summaryGeneration.handleStopGeneration}
+              customPrompt={customPrompt}
+              summaryResponse={summaryResponse}
+              onSaveSummary={meetingData.handleSaveSummary}
+              onSummaryChange={meetingData.handleSummaryChange}
+              onDirtyChange={meetingData.setIsSummaryDirty}
+              summaryError={summaryGeneration.summaryError}
+              onRegenerateSummary={summaryGeneration.handleRegenerateSummary}
+              getSummaryStatusMessage={summaryGeneration.getSummaryStatusMessage}
+              availableTemplates={templates.availableTemplates}
+              selectedTemplate={templates.selectedTemplate}
+              onTemplateSelect={templates.handleTemplateSelection}
+              isModelConfigLoading={false}
+              onOpenModelSettings={handleRegisterModalOpen}
+            />
+          </TabsContent>
+          <TabsContent value="tasks" className="flex flex-1 overflow-hidden m-0 data-[state=inactive]:hidden w-full">
+            <MeetingTasksPanel
+              meetingId={meeting.id}
+              actionItems={meetingData.aiSummary?.ActionItems?.blocks?.map((b: { content?: string }) => b.content).filter(Boolean) as string[] | undefined}
+            />
+          </TabsContent>
+        </div>
+      </Tabs>
     </motion.div>
   );
 }

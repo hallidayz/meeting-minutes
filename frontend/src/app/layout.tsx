@@ -21,6 +21,7 @@ import { OnboardingFlow } from '@/components/onboarding'
 import { DownloadProgressToastProvider } from '@/components/shared/DownloadProgressToast'
 import { UpdateCheckProvider } from '@/components/UpdateCheckProvider'
 import { RecordingPostProcessingProvider } from '@/contexts/RecordingPostProcessingProvider'
+import { PinGateProvider } from '@/contexts/PinGateContext'
 
 const sourceSans3 = Source_Sans_3({
   subsets: ['latin'],
@@ -100,6 +101,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${sourceSans3.variable} font-sans antialiased`}>
+        <PinGateProvider>
         <AnalyticsProvider>
           <RecordingStateProvider>
             <TranscriptProvider>
@@ -133,6 +135,7 @@ export default function RootLayout({
             </TranscriptProvider>
           </RecordingStateProvider>
         </AnalyticsProvider>
+        </PinGateProvider>
         <Toaster position="bottom-center" richColors closeButton />
       </body>
     </html>

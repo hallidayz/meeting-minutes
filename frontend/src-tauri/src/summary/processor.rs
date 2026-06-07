@@ -1,3 +1,4 @@
+use crate::summary::industry::industry_system_prompt_prefix;
 use crate::summary::llm_client::{generate_summary, LLMProvider};
 use crate::summary::templates;
 use once_cell::sync::Lazy;
@@ -172,6 +173,7 @@ pub async fn generate_meeting_summary(
     top_p: Option<f32>,
     app_data_dir: Option<&PathBuf>,
     cancellation_token: Option<&CancellationToken>,
+    industry: Option<&str>,
 ) -> Result<(String, i64), String> {
     // Check cancellation at the start
     if let Some(token) = cancellation_token {
@@ -313,8 +315,9 @@ pub async fn generate_meeting_summary(
     let clean_template_markdown = template.to_markdown_structure();
     let section_instructions = template.to_section_instructions();
 
+    let industry_prefix = industry_system_prompt_prefix(industry.unwrap_or("General"));
     let final_system_prompt = format!(
-        r#"You are an expert meeting summarizer. Generate a final meeting report by filling in the provided Markdown template based on the source text.
+        r#"{} Generate a final meeting report by filling in the provided Markdown template based on the source text.
 
 **CRITICAL INSTRUCTIONS:**
 1. Only use information present in the source text; do not add or infer anything.
@@ -331,7 +334,7 @@ pub async fn generate_meeting_summary(
 {}
 </template>
 "#,
-        section_instructions, clean_template_markdown
+        industry_prefix, section_instructions, clean_template_markdown
     );
 
     let mut final_user_prompt = format!(

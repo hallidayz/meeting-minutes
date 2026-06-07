@@ -39,7 +39,9 @@ pub mod analytics;
 pub mod api;
 pub mod audio;
 pub mod console_utils;
+pub mod crypto;
 pub mod database;
+pub mod import;
 pub mod notifications;
 pub mod ollama;
 pub mod onboarding;
@@ -47,6 +49,7 @@ pub mod openrouter;
 pub mod parakeet_engine;
 pub mod state;
 pub mod summary;
+pub mod tasks;
 pub mod tray;
 pub mod utils;
 pub mod whisper_engine;
@@ -408,6 +411,7 @@ pub fn run() {
         )) as NotificationManagerState<tauri::Wry>)
         .manage(audio::init_system_audio_state())
         .manage(summary::summary_engine::ModelManagerState(Arc::new(tokio::sync::Mutex::new(None))))
+        .manage(crypto::CryptoState::new())
         .setup(|_app| {
             log::info!("Application setup complete");
 
@@ -625,6 +629,7 @@ pub fn run() {
             api::api_get_meeting_transcripts,
             api::api_save_meeting_title,
             api::api_save_transcript,
+            api::api_save_transcript_speaker,
             api::open_meeting_folder,
             api::test_backend_connection,
             api::debug_backend_connection,
@@ -707,6 +712,24 @@ pub fn run() {
             onboarding::save_onboarding_status_cmd,
             onboarding::reset_onboarding_status_cmd,
             onboarding::complete_onboarding,
+            // Encryption commands
+            crypto::commands::crypto_get_status,
+            crypto::commands::crypto_setup_encryption,
+            crypto::commands::crypto_unlock,
+            crypto::commands::crypto_lock,
+            crypto::commands::crypto_change_pin,
+            crypto::commands::crypto_encrypt_field,
+            crypto::commands::crypto_decrypt_field,
+            // Tasks commands
+            tasks::commands::list_tasks,
+            tasks::commands::create_task,
+            tasks::commands::update_task,
+            tasks::commands::delete_task,
+            tasks::commands::promote_action_items,
+            // Industry & import commands
+            import::commands::get_industry_setting,
+            import::commands::set_industry_setting,
+            import::commands::import_ai_notes_bundle,
             // System settings commands
             #[cfg(target_os = "macos")]
             utils::open_system_settings,

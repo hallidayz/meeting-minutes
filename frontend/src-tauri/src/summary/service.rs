@@ -1,5 +1,6 @@
 use crate::database::repositories::{
-    meeting::MeetingsRepository, setting::SettingsRepository, summary::SummaryProcessesRepository,
+    app_settings::AppSettingsRepository, meeting::MeetingsRepository,
+    setting::SettingsRepository, summary::SummaryProcessesRepository,
 };
 use crate::summary::llm_client::LLMProvider;
 use crate::summary::processor::{extract_meeting_name_from_markdown, generate_meeting_summary};
@@ -219,6 +220,12 @@ impl SummaryService {
         // Get app data directory for BuiltInAI provider
         let app_data_dir = _app.path().app_data_dir().ok();
 
+        let industry = AppSettingsRepository::get(&pool, "industry")
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "General".to_string());
+
         // Generate summary
         let client = reqwest::Client::new();
         let result = generate_meeting_summary(
@@ -237,6 +244,7 @@ impl SummaryService {
             custom_openai_top_p,
             app_data_dir.as_ref(),
             Some(&cancellation_token),
+            Some(&industry),
         )
         .await;
 

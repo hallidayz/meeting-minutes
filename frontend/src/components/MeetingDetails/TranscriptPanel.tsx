@@ -53,6 +53,7 @@ export function TranscriptPanel({
       endTime: t.audio_end_time,
       text: t.text,
       confidence: t.confidence,
+      speaker: t.speaker,
     }));
   }, [transcripts, usePagination, segments]);
 
@@ -78,6 +79,11 @@ export function TranscriptPanel({
           enableStreaming={false}
           showConfidence={true}
           disableAutoScroll={disableAutoScroll}
+          editableSpeakers
+          onSpeakerRename={async (segmentId, newSpeaker) => {
+            const { invoke } = await import('@tauri-apps/api/core');
+            await invoke('api_save_transcript_speaker', { segmentId, speaker: newSpeaker });
+          }}
           hasMore={hasMore}
           isLoadingMore={isLoadingMore}
           totalCount={totalCount}

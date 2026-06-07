@@ -1,10 +1,10 @@
 [package]
-name = "meetily"
-version = "0.2.0"
-description = "A Tauri App for meeting minutes"
-authors = ["Sujith S"]
+name = "ai-guardian"
+version = "0.1.0"
+description = "AI Guardian — privacy-first local meeting assistant"
+authors = ["Adam Halliday"]
 license = "MIT"
-repository = "https://github.com/Zackriya-Solutions/meeting-minutes"
+repository = "https://github.com/hallidayz/ai-guardian"
 edition = "2021"
 rust-version = "1.77"
 
@@ -133,6 +133,10 @@ bytes = { version = "1.9.0", features = ["serde"] }
 esaxx-rs = "0.1.10"
 symphonia = { version = "0.5.4", features = ["aac", "isomp4", "opt-simd"] }
 rand = "0.8.5"
+aes-gcm = "0.10"
+pbkdf2 = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
 rubato = "0.15.0"
 ringbuf = "0.4.8"
 
