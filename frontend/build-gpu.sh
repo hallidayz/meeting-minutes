@@ -11,7 +11,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-echo -e "${BLUE}🚀 Meetily GPU-Accelerated Build Script${NC}"
+echo -e "${BLUE}🚀 AI Guardian GPU-Accelerated Build Script${NC}"
 echo ""
 
 # Export CUDA flags for Linux/NVIDIA
@@ -52,7 +52,7 @@ else
 fi
 
 echo ""
-echo -e "${BLUE}📦 Building Meetily...${NC}"
+echo -e "${BLUE}📦 Building AI Guardian...${NC}"
 echo ""
 
 # Check for pnpm or npm
@@ -175,7 +175,13 @@ echo -e "${BLUE}Building complete Tauri application...${NC}"
 echo ""
 
 # NO_STRIP true due to issues with bundling appImage
-NO_STRIP=true $PKG_MGR run tauri:build
+# Skip updater artifact signing locally when TAURI_SIGNING_PRIVATE_KEY is unset
+if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+  echo -e "${YELLOW}⚠️  No TAURI_SIGNING_PRIVATE_KEY — skipping updater artifacts${NC}"
+  NO_STRIP=true $PKG_MGR exec tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'
+else
+  NO_STRIP=true $PKG_MGR run tauri:build
+fi
 
 if [ $? -eq 0 ]; then
   echo ""
