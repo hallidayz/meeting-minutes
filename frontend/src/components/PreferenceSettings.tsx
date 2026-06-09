@@ -18,6 +18,7 @@ export function PreferenceSettings() {
   } = useConfig();
 
   const [notificationsEnabled, setNotificationsEnabled] = useState<boolean | null>(null);
+  const [meetingRemindersEnabled, setMeetingRemindersEnabled] = useState<boolean | null>(null);
   const [userEmail, setUserEmail] = useState('');
   const [emailSaved, setEmailSaved] = useState(false);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
@@ -78,6 +79,9 @@ export function PreferenceSettings() {
         notificationSettings.notification_preferences.show_recording_started &&
         notificationSettings.notification_preferences.show_recording_stopped;
       setNotificationsEnabled(enabled);
+      setMeetingRemindersEnabled(
+        notificationSettings.notification_preferences.show_meeting_reminders
+      );
       if (isInitialLoad) {
         setPreviousNotificationsEnabled(enabled);
         setIsInitialLoad(false);
@@ -85,12 +89,31 @@ export function PreferenceSettings() {
     } else if (!isLoadingPreferences) {
       // If not loading and no settings, use default
       setNotificationsEnabled(true);
+      setMeetingRemindersEnabled(true);
       if (isInitialLoad) {
         setPreviousNotificationsEnabled(true);
         setIsInitialLoad(false);
       }
     }
   }, [notificationSettings, isLoadingPreferences, isInitialLoad])
+
+  const handleMeetingRemindersToggle = async (enabled: boolean) => {
+    if (!notificationSettings) return;
+    setMeetingRemindersEnabled(enabled);
+    try {
+      const updatedSettings: NotificationSettings = {
+        ...notificationSettings,
+        notification_preferences: {
+          ...notificationSettings.notification_preferences,
+          show_meeting_reminders: enabled,
+        },
+      };
+      await updateNotificationSettings(updatedSettings);
+    } catch (error) {
+      console.error('Failed to update meeting reminder settings:', error);
+      setMeetingRemindersEnabled(!enabled);
+    }
+  };
 
   useEffect(() => {
     // Skip update on initial load or if value hasn't actually changed
@@ -197,6 +220,31 @@ export function PreferenceSettings() {
               <p className="text-sm text-gray-600">Enable or disable notifications of start and end of meeting</p>
             </div>
             <Switch checked={notificationsEnabledValue} onCheckedChange={setNotificationsEnabled} />
+          </div>
+        )}
+      </div>
+
+      {/* Meeting reminders (calendar) */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
+        {preferencesLoading ? (
+          <div className="animate-pulse space-y-3">
+            <div className="h-5 bg-gray-200 rounded w-1/3" />
+            <div className="h-4 bg-gray-200 rounded w-2/3" />
+          </div>
+        ) : (
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">Meeting reminders</h3>
+              <p className="text-sm text-gray-600">
+                Notify 15 and 5 minutes before calendar events (requires calendar integration in
+                Settings).
+              </p>
+            </div>
+            <Switch
+              checked={meetingRemindersEnabled ?? true}
+              onCheckedChange={handleMeetingRemindersToggle}
+              disabled={!notificationSettings}
+            />
           </div>
         )}
       </div>

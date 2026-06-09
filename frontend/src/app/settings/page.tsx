@@ -4,6 +4,7 @@ import React, { useState, useLayoutEffect, useRef, Suspense, lazy } from 'react'
 import { ArrowLeft, Settings2, Mic, Database as DatabaseIcon, SparkleIcon, FileText } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
+import { CalendarSettings } from '@/components/Calendar/CalendarSettings';
 import { IndustrySettings } from '@/components/IndustrySettings';
 import { ImportAiNotes } from '@/components/ImportAiNotes';
 import { PreferenceSettings } from '@/components/PreferenceSettings';
@@ -101,6 +102,7 @@ export default function SettingsPage() {
 
             <TabsContent value="general" className="space-y-8">
               <IndustrySettings />
+              <CalendarSettings />
               <ImportAiNotes />
               <PreferenceSettings />
             </TabsContent>

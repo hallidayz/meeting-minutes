@@ -25,10 +25,11 @@ Forked from [hallidayz/meeting-minutes](https://github.com/hallidayz/meeting-min
 | Meeting details tabs | Transcript / Summary / Tasks |
 | ai-notes import | `import_ai_notes_bundle` command |
 | Migration export (legacy web) | ai-notes `/api/export/bundle` |
+| Native calendar read (OS APIs) | `frontend/src-tauri/src/calendar/`, Settings → Calendar Integration |
 
 ## Explicitly excluded
 
-- Calendar / OAuth integrations
+- Calendar OAuth / cloud API connectors (Google Calendar API, Microsoft Graph, etc.)
 - Express-centric web runtime from ai-notes
 
 ## Build

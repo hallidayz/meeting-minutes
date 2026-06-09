@@ -39,6 +39,7 @@ pub mod analytics;
 pub mod api;
 pub mod assistant;
 pub mod audio;
+pub mod calendar;
 pub mod console_utils;
 pub mod crypto;
 pub mod database;
@@ -432,6 +433,8 @@ pub fn run() {
                 log::error!("Failed to create system tray: {}", e);
             }
 
+            calendar::scheduler::spawn_calendar_reminder_scheduler(_app.handle().clone());
+
             // Initialize notification system with proper defaults
             log::info!("Initializing notification system...");
             let app_for_notif = _app.handle().clone();
@@ -756,6 +759,16 @@ pub fn run() {
             import::commands::get_industry_setting,
             import::commands::set_industry_setting,
             import::commands::import_ai_notes_bundle,
+            // Calendar commands
+            calendar::commands::calendar_get_integration_enabled,
+            calendar::commands::calendar_set_integration_enabled,
+            calendar::commands::calendar_get_permission_status,
+            calendar::commands::calendar_request_permission,
+            calendar::commands::calendar_list_calendars,
+            calendar::commands::calendar_get_upcoming_events,
+            calendar::commands::calendar_get_calendar_settings,
+            calendar::commands::calendar_set_calendar_settings,
+            calendar::commands::calendar_open_system_calendar_settings,
             // System settings commands
             #[cfg(target_os = "macos")]
             utils::open_system_settings,
