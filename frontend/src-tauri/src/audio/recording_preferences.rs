@@ -92,6 +92,31 @@ pub fn generate_recording_filename(format: &str) -> String {
     format!("recording_{}.{}", timestamp, format)
 }
 
+/// Apply stored Core Audio backend so system capture routes to the Remote channel.
+#[cfg(target_os = "macos")]
+fn apply_system_audio_backend_from_prefs(prefs: &mut RecordingPreferences) {
+    let backend_str = prefs
+        .system_audio_backend
+        .clone()
+        .unwrap_or_else(|| AudioCaptureBackend::CoreAudio.to_string());
+
+    if prefs.system_audio_backend.is_none() {
+        prefs.system_audio_backend = Some(backend_str.clone());
+    }
+
+    if let Some(backend) = AudioCaptureBackend::from_string(&backend_str) {
+        info!("Applying system audio backend from preferences: {:?}", backend);
+        crate::audio::capture::set_current_backend(backend);
+    } else {
+        warn!(
+            "Unknown system audio backend '{}', defaulting to Core Audio",
+            backend_str
+        );
+        crate::audio::capture::set_current_backend(AudioCaptureBackend::CoreAudio);
+        prefs.system_audio_backend = Some(AudioCaptureBackend::CoreAudio.to_string());
+    }
+}
+
 /// Load recording preferences from store
 pub async fn load_recording_preferences<R: Runtime>(
     app: &AppHandle<R>,
@@ -110,12 +135,8 @@ pub async fn load_recording_preferences<R: Runtime>(
         match serde_json::from_value::<RecordingPreferences>(value.clone()) {
             Ok(mut p) => {
                 info!("Loaded recording preferences from store");
-                // Update macOS backend to current value if needed
                 #[cfg(target_os = "macos")]
-                {
-                    let backend = crate::audio::capture::get_current_backend();
-                    p.system_audio_backend = Some(backend.to_string());
-                }
+                apply_system_audio_backend_from_prefs(&mut p);
                 p
             }
             Err(e) => {
@@ -125,7 +146,10 @@ pub async fn load_recording_preferences<R: Runtime>(
         }
     } else {
         info!("No stored preferences found, using defaults");
-        RecordingPreferences::default()
+        let mut defaults = RecordingPreferences::default();
+        #[cfg(target_os = "macos")]
+        apply_system_audio_backend_from_prefs(&mut defaults);
+        defaults
     };
 
     info!("Loaded recording preferences: save_folder={:?}, auto_save={}, format={}, mic={:?}, system={:?}",

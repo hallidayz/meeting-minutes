@@ -14,6 +14,11 @@ module.exports = {
   			]
   		},
   		colors: {
+  			brand: {
+  				primary: 'var(--brand-primary)',
+  				accent: 'var(--brand-accent)',
+  				background: 'var(--brand-background)',
+  			},
   			background: 'hsl(var(--background))',
   			foreground: 'hsl(var(--foreground))',
   			border: 'hsl(var(--border))',

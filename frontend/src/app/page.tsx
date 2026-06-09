@@ -21,13 +21,14 @@ import { TranscriptRecovery } from '@/components/TranscriptRecovery';
 import { indexedDBService } from '@/services/indexedDBService';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
+import { DashboardHeader } from '@/components/Dashboard/DashboardHeader';
+import { HomeDashboard } from '@/components/Dashboard/HomeDashboard';
 
 export default function Home() {
   // Local page state (not moved to contexts)
   const [isRecording, setIsRecordingState] = useState(false);
   const [barHeights, setBarHeights] = useState(['58%', '76%', '58%']);
   const [showRecoveryDialog, setShowRecoveryDialog] = useState(false);
-
   // Use contexts for state management
   const { meetingTitle } = useTranscripts();
   const { transcriptModelConfig, selectedDevices } = useConfig();
@@ -125,9 +126,14 @@ export default function Home() {
 
       if (result.success) {
         toast.success('Meeting recovered successfully!', {
-          description: result.audioRecoveryStatus?.status === 'success'
-            ? 'Transcripts and audio recovered'
-            : 'Transcripts recovered (no audio available)',
+          description:
+            result.audioRecoveryStatus?.status === 'success'
+              ? 'Transcripts and audio recovered'
+              : result.audioRecoveryStatus?.status === 'partial'
+                ? 'Partially recovered — some audio checkpoints were restored'
+                : result.audioRecoveryStatus?.status === 'none'
+                  ? 'Transcripts recovered (no audio available)'
+                  : 'Audio recovered (no transcripts were captured)',
           action: result.meetingId ? {
             label: 'View Meeting',
             onClick: () => {
@@ -189,12 +195,14 @@ export default function Home() {
   // Computed values using global status
   const isProcessingStop = status === RecordingStatus.PROCESSING_TRANSCRIPTS || isProcessing;
 
+  const showRecordingView = recordingState.isRecording || isProcessingStop || isStopping;
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, ease: 'easeOut' }}
-      className="flex flex-col h-screen bg-gray-50"
+      className="flex flex-col h-full min-h-0 bg-background"
     >
       {/* All Modals supported*/}
       <SettingsModals
@@ -212,6 +220,12 @@ export default function Home() {
         onDelete={deleteRecoverableMeeting}
         onLoadPreview={loadMeetingTranscripts}
       />
+      {!showRecordingView ? (
+        <>
+          <DashboardHeader />
+          <HomeDashboard />
+        </>
+      ) : (
       <div className="flex flex-1 overflow-hidden">
         <TranscriptPanel
           isProcessingStop={isProcessingStop}
@@ -225,7 +239,7 @@ export default function Home() {
           status !== RecordingStatus.SAVING && (
             <div className="fixed bottom-12 left-0 right-0 z-10">
               <div
-                className="flex justify-center pl-8 transition-[margin] duration-300"
+                className="flex justify-center transition-[margin] duration-300"
                 style={{
                   marginLeft: sidebarCollapsed ? '4rem' : '16rem'
                 }}
@@ -260,6 +274,7 @@ export default function Home() {
           sidebarCollapsed={sidebarCollapsed}
         />
       </div>
+      )}
     </motion.div>
   );
 }

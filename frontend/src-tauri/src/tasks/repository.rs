@@ -1,4 +1,4 @@
-use super::models::Task;
+use super::models::{Task, TaskWithMeeting};
 use chrono::Utc;
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -6,11 +6,28 @@ use uuid::Uuid;
 pub struct TasksRepository;
 
 impl TasksRepository {
-    pub async fn list(pool: &SqlitePool) -> Result<Vec<Task>, sqlx::Error> {
-        sqlx::query_as::<_, Task>(
-            "SELECT id, title, due_date, priority, status, meeting_id, created_at FROM tasks ORDER BY created_at DESC",
+    pub async fn list(pool: &SqlitePool) -> Result<Vec<TaskWithMeeting>, sqlx::Error> {
+        sqlx::query_as::<_, TaskWithMeeting>(
+            "SELECT t.id, t.title, t.due_date, t.priority, t.status, t.meeting_id, t.created_at, t.notes,
+                    m.title AS meeting_name, m.created_at AS meeting_date
+             FROM tasks t
+             LEFT JOIN meetings m ON t.meeting_id = m.id
+             ORDER BY t.created_at DESC",
         )
         .fetch_all(pool)
+        .await
+    }
+
+    pub async fn get_by_id(pool: &SqlitePool, id: &str) -> Result<Option<TaskWithMeeting>, sqlx::Error> {
+        sqlx::query_as::<_, TaskWithMeeting>(
+            "SELECT t.id, t.title, t.due_date, t.priority, t.status, t.meeting_id, t.created_at, t.notes,
+                    m.title AS meeting_name, m.created_at AS meeting_date
+             FROM tasks t
+             LEFT JOIN meetings m ON t.meeting_id = m.id
+             WHERE t.id = ?",
+        )
+        .bind(id)
+        .fetch_optional(pool)
         .await
     }
 
@@ -21,12 +38,13 @@ impl TasksRepository {
         priority: &str,
         status: &str,
         meeting_id: Option<&str>,
+        notes: Option<&str>,
     ) -> Result<Task, sqlx::Error> {
         let id = Uuid::new_v4().to_string();
         let created_at = Utc::now().to_rfc3339();
         sqlx::query(
-            "INSERT INTO tasks (id, title, due_date, priority, status, meeting_id, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO tasks (id, title, due_date, priority, status, meeting_id, created_at, notes)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(title)
@@ -35,6 +53,7 @@ impl TasksRepository {
         .bind(status)
         .bind(meeting_id)
         .bind(&created_at)
+        .bind(notes)
         .execute(pool)
         .await?;
 
@@ -46,6 +65,7 @@ impl TasksRepository {
             status: status.to_string(),
             meeting_id: meeting_id.map(|s| s.to_string()),
             created_at,
+            notes: notes.map(|s| s.to_string()),
         })
     }
 
@@ -57,9 +77,10 @@ impl TasksRepository {
         priority: Option<&str>,
         status: Option<&str>,
         meeting_id: Option<Option<&str>>,
+        notes: Option<Option<&str>>,
     ) -> Result<bool, sqlx::Error> {
         let existing = sqlx::query_as::<_, Task>(
-            "SELECT id, title, due_date, priority, status, meeting_id, created_at FROM tasks WHERE id = ?",
+            "SELECT id, title, due_date, priority, status, meeting_id, created_at, notes FROM tasks WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(pool)
@@ -82,15 +103,21 @@ impl TasksRepository {
             Some(None) => None,
             None => task.meeting_id.as_deref(),
         };
+        let new_notes = match notes {
+            Some(Some(n)) => Some(n),
+            Some(None) => None,
+            None => task.notes.as_deref(),
+        };
 
         sqlx::query(
-            "UPDATE tasks SET title = ?, due_date = ?, priority = ?, status = ?, meeting_id = ? WHERE id = ?",
+            "UPDATE tasks SET title = ?, due_date = ?, priority = ?, status = ?, meeting_id = ?, notes = ? WHERE id = ?",
         )
         .bind(new_title)
         .bind(new_due)
         .bind(new_priority)
         .bind(new_status)
         .bind(new_meeting)
+        .bind(new_notes)
         .bind(id)
         .execute(pool)
         .await?;
@@ -116,7 +143,16 @@ impl TasksRepository {
             if item.trim().is_empty() {
                 continue;
             }
-            let task = Self::create(pool, item.trim(), None, "medium", "todo", Some(meeting_id)).await?;
+            let task = Self::create(
+                pool,
+                item.trim(),
+                None,
+                "medium",
+                "todo",
+                Some(meeting_id),
+                None,
+            )
+            .await?;
             let created_at = Utc::now().to_rfc3339();
             sqlx::query(
                 "INSERT INTO task_promotions (meeting_id, action_item_text, task_id, created_at) VALUES (?, ?, ?, ?)",

@@ -59,11 +59,11 @@ export function useRecordingStart(
       return true;
     }
     try {
-      await invoke('whisper_init');
-      const hasModels = await invoke<boolean>('whisper_has_available_models');
-      return hasModels;
+      const loadedModel = await invoke<string>('whisper_prepare_for_recording');
+      console.log('[useRecordingStart] Whisper model ready:', loadedModel);
+      return true;
     } catch (error) {
-      console.error('Failed to check Whisper status:', error);
+      console.error('Failed to prepare Whisper for recording:', error);
       return false;
     }
   }, [isWhisperProvider]);

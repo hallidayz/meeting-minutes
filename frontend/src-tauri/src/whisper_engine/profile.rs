@@ -47,9 +47,12 @@ pub fn build_full_params(profile: SttProfile, language: Option<&str>) -> FullPar
         Some(lang) => (Some(lang), false),
     };
 
+    let hw = crate::audio::HardwareProfile::detect();
+    let adaptive = hw.get_whisper_config();
+
     let mut params = match profile {
         SttProfile::WhisperCpp => FullParams::new(SamplingStrategy::BeamSearch {
-            beam_size: 5,
+            beam_size: adaptive.beam_size as i32,
             patience: -1.0,
         }),
         SttProfile::FastWhisper => FullParams::new(SamplingStrategy::Greedy { best_of: 1 }),
@@ -73,7 +76,7 @@ pub fn build_full_params(profile: SttProfile, language: Option<&str>) -> FullPar
             params.set_max_initial_ts(1.0);
             params.set_entropy_thold(2.4);
             params.set_logprob_thold(-1.0);
-            params.set_no_speech_thold(0.55);
+            params.set_no_speech_thold(0.42);
             params.set_max_len(200);
             params.set_single_segment(false);
         }
@@ -82,7 +85,7 @@ pub fn build_full_params(profile: SttProfile, language: Option<&str>) -> FullPar
             params.set_max_initial_ts(1.0);
             params.set_entropy_thold(2.8);
             params.set_logprob_thold(-1.0);
-            params.set_no_speech_thold(0.6);
+            params.set_no_speech_thold(0.5);
             params.set_max_len(128);
             params.set_single_segment(true);
         }

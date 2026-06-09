@@ -1,9 +1,14 @@
 const path = require('path');
 
+const isProd = process.env.NODE_ENV === 'production';
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Hide the "Next.js X.X (stale) / Webpack" badge in the Tauri webview (errors still surface)
+  devIndicators: false,
   reactStrictMode: false, // Disabled for BlockNote compatibility
-  output: 'export',
+  // Static export is for Tauri production builds only — enabling in dev breaks chunk loading
+  ...(isProd ? { output: 'export' } : {}),
   images: {
     unoptimized: true,
   },

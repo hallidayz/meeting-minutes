@@ -1,12 +1,19 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
 import { Label } from './ui/label';
 import { Eye, EyeOff, Lock, Unlock } from 'lucide-react';
 import { ModelManager } from './WhisperModelManager';
-import { getRecommendedModelForTier } from '../lib/whisper';
+import {
+    ModelInfo,
+    WhisperAPI,
+    getDownloadedModelsForTier,
+    getRecommendedModelForTier,
+    getWhisperModelDisplayName,
+} from '../lib/whisper';
 
 export interface TranscriptModelProps {
     provider: 'localWhisper' | 'fastWhisper' | 'deepgram' | 'elevenLabs' | 'groq' | 'openai';
@@ -35,12 +42,50 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
             ? transcriptModelConfig.model
             : getRecommendedModelForTier('fast')
     );
+    const [whisperModels, setWhisperModels] = useState<ModelInfo[]>([]);
+
+    const isWhisperProvider =
+        transcriptModelConfig.provider === 'localWhisper'
+        || transcriptModelConfig.provider === 'fastWhisper';
+    const activeTier = transcriptModelConfig.provider === 'fastWhisper' ? 'fast' : 'accurate';
+    const downloadedModels = useMemo(
+        () => getDownloadedModelsForTier(whisperModels, activeTier),
+        [whisperModels, activeTier]
+    );
+    const activeModelName = transcriptModelConfig.provider === 'fastWhisper' ? fastModel : accurateModel;
 
     useEffect(() => {
         if (transcriptModelConfig.provider === 'localWhisper' || transcriptModelConfig.provider === 'fastWhisper') {
             setApiKey(null);
         }
     }, [transcriptModelConfig.provider]);
+
+    useEffect(() => {
+        let unlistenComplete: (() => void) | null = null;
+
+        const refreshModels = async () => {
+            try {
+                await WhisperAPI.init();
+                const list = await WhisperAPI.getAvailableModels();
+                setWhisperModels(list);
+            } catch (err) {
+                console.error('Failed to refresh whisper models:', err);
+            }
+        };
+
+        refreshModels();
+
+        const setupListener = async () => {
+            unlistenComplete = await listen<{ modelName: string }>('model-download-complete', () => {
+                refreshModels();
+            });
+        };
+        setupListener();
+
+        return () => {
+            if (unlistenComplete) unlistenComplete();
+        };
+    }, []);
 
     const fetchApiKey = async (provider: string) => {
         try {
@@ -73,6 +118,18 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
         }
     };
 
+    const saveWhisperModel = async (modelName: string, provider: 'localWhisper' | 'fastWhisper') => {
+        try {
+            await invoke('api_save_transcript_config', {
+                provider,
+                model: modelName,
+                apiKey: null,
+            });
+        } catch (error) {
+            console.error('Failed to save transcript model:', error);
+        }
+    };
+
     const handleWhisperModelSelect = (modelName: string, tier: 'accurate' | 'fast') => {
         if (tier === 'accurate') {
             setAccurateModel(modelName);
@@ -80,7 +137,6 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
             setFastModel(modelName);
         }
 
-        const activeTier = transcriptModelConfig.provider === 'fastWhisper' ? 'fast' : 'accurate';
         if (activeTier === tier) {
             setTranscriptModelConfig({
                 ...transcriptModelConfig,
@@ -88,6 +144,22 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
             });
             onModelSelect?.();
         }
+    };
+
+    const handleDownloadedModelDropdown = async (modelName: string) => {
+        const provider = activeTier === 'fast' ? 'fastWhisper' : 'localWhisper';
+        if (activeTier === 'accurate') {
+            setAccurateModel(modelName);
+        } else {
+            setFastModel(modelName);
+        }
+        setTranscriptModelConfig({
+            ...transcriptModelConfig,
+            provider,
+            model: modelName,
+        });
+        await saveWhisperModel(modelName, provider);
+        onModelSelect?.();
     };
 
     const handleProviderChange = async (provider: TranscriptModelProps['provider']) => {
@@ -155,6 +227,35 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                                     </SelectContent>
                                 </Select>
                             )}
+
+                            {isWhisperProvider && (
+                                <Select
+                                    value={
+                                        downloadedModels.some((m) => m.name === activeModelName)
+                                            ? activeModelName
+                                            : undefined
+                                    }
+                                    onValueChange={handleDownloadedModelDropdown}
+                                    disabled={downloadedModels.length === 0}
+                                >
+                                    <SelectTrigger className='min-w-[200px] focus:ring-1 focus:ring-blue-500 focus:border-blue-500'>
+                                        <SelectValue
+                                            placeholder={
+                                                downloadedModels.length === 0
+                                                    ? 'Download a model below'
+                                                    : 'Select downloaded model'
+                                            }
+                                        />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {downloadedModels.map((model) => (
+                                            <SelectItem key={model.name} value={model.name}>
+                                                {getWhisperModelDisplayName(model.name)}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            )}
                         </div>
                     </div>
 
@@ -163,6 +264,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                             <ModelManager
                                 selectedModel={accurateModel}
                                 onModelSelect={(model) => handleWhisperModelSelect(model, 'accurate')}
+                                onModelsChange={setWhisperModels}
                                 autoSave={true}
                                 modelTier="accurate"
                             />
@@ -174,6 +276,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                             <ModelManager
                                 selectedModel={fastModel}
                                 onModelSelect={(model) => handleWhisperModelSelect(model, 'fast')}
+                                onModelsChange={setWhisperModels}
                                 autoSave={true}
                                 modelTier="fast"
                             />

@@ -37,6 +37,7 @@ pub(crate) use perf_trace;
 // Declare audio module
 pub mod analytics;
 pub mod api;
+pub mod assistant;
 pub mod audio;
 pub mod console_utils;
 pub mod crypto;
@@ -63,9 +64,9 @@ use tokio::sync::RwLock;
 
 static RECORDING_FLAG: AtomicBool = AtomicBool::new(false);
 
-// Global language preference storage (default to "auto-translate" for automatic translation to English)
+// Global language preference storage (default: detect language, transcribe in original — no auto-translate)
 static LANGUAGE_PREFERENCE: std::sync::LazyLock<StdMutex<String>> =
-    std::sync::LazyLock::new(|| StdMutex::new("auto-translate".to_string()));
+    std::sync::LazyLock::new(|| StdMutex::new("auto".to_string()));
 
 #[derive(Debug, Deserialize)]
 struct RecordingArgs {
@@ -374,11 +375,22 @@ async fn start_recording_with_devices_and_meeting<R: Runtime>(
 // Language preference commands
 #[tauri::command]
 async fn get_language_preference() -> Result<String, String> {
-    let language = LANGUAGE_PREFERENCE
+    let mut language = LANGUAGE_PREFERENCE
         .lock()
-        .map_err(|e| format!("Failed to get language preference: {}", e))?;
-    log_info!("Retrieved language preference: {}", &*language);
-    Ok(language.clone())
+        .map_err(|e| format!("Failed to get language preference: {}", e))?
+        .clone();
+
+    // Migrate legacy auto-translate → auto (transcribe in original language)
+    if language == "auto-translate" {
+        log_info!("Migrating language preference auto-translate → auto");
+        language = "auto".to_string();
+        if let Ok(mut guard) = LANGUAGE_PREFERENCE.lock() {
+            *guard = language.clone();
+        }
+    }
+
+    log_info!("Retrieved language preference: {}", language);
+    Ok(language)
 }
 
 #[tauri::command]
@@ -547,6 +559,7 @@ pub fn run() {
             whisper_engine::commands::whisper_is_model_loaded,
             whisper_engine::commands::whisper_has_available_models,
             whisper_engine::commands::whisper_validate_model_ready,
+            whisper_engine::commands::whisper_prepare_for_recording,
             whisper_engine::commands::whisper_transcribe_audio,
             whisper_engine::commands::whisper_get_models_directory,
             whisper_engine::commands::whisper_download_model,
@@ -594,6 +607,7 @@ pub fn run() {
             audio::recording_commands::get_meeting_folder_path,
             // Reload sync commands (retrieve transcript history and meeting name)
             audio::recording_commands::get_transcript_history,
+            audio::recording_commands::load_transcripts_from_folder,
             audio::recording_commands::get_recording_meeting_name,
             // Device monitoring commands (AirPods/Bluetooth disconnect/reconnect)
             audio::recording_commands::poll_audio_device_events,
@@ -614,6 +628,7 @@ pub fn run() {
             ollama::get_ollama_model_context,
             api::api_get_meetings,
             api::api_search_transcripts,
+            assistant::commands::api_assistant_chat,
             api::api_get_profile,
             api::api_save_profile,
             api::api_update_profile,
@@ -647,7 +662,11 @@ pub fn run() {
             summary::commands::api_cancel_summary,
             // Template commands
             summary::template_commands::api_list_templates,
+            summary::template_commands::api_get_template,
             summary::template_commands::api_get_template_details,
+            summary::template_commands::api_save_template,
+            summary::template_commands::api_delete_template,
+            summary::template_commands::api_duplicate_template,
             summary::template_commands::api_validate_template,
             // Built-in AI commands
             summary::summary_engine::commands::builtin_ai_list_models,
@@ -658,6 +677,7 @@ pub fn run() {
             summary::summary_engine::commands::builtin_ai_is_model_ready,
             summary::summary_engine::commands::builtin_ai_get_available_summary_model,
             summary::summary_engine::commands::builtin_ai_get_recommended_model,
+            summary::summary_engine::commands::builtin_ai_get_device_recommended_models,
             openrouter::get_openrouter_models,
             audio::recording_preferences::get_recording_preferences,
             audio::recording_preferences::set_recording_preferences,
@@ -728,6 +748,10 @@ pub fn run() {
             tasks::commands::update_task,
             tasks::commands::delete_task,
             tasks::commands::promote_action_items,
+            tasks::commands::get_user_email,
+            tasks::commands::set_user_email,
+            tasks::commands::notify_task,
+            tasks::commands::email_task,
             // Industry & import commands
             import::commands::get_industry_setting,
             import::commands::set_industry_setting,

@@ -297,6 +297,11 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                 {isPaused ? 'Click resume to continue recording' : 'Speak to see live transcription'}
                             </p>
                         </>
+                    ) : disableAutoScroll ? (
+                        <>
+                            <p className="text-lg font-semibold">No transcript available</p>
+                            <p className="text-xs mt-1">This meeting has no transcribed content yet.</p>
+                        </>
                     ) : (
                         <>
                             <p className="text-lg font-semibold">Welcome to ai-guardian!</p>

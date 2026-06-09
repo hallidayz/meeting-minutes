@@ -8,7 +8,9 @@ import { ModelConfig } from '@/components/ModelSettingsModal';
 import { SummaryGeneratorButtonGroup } from './SummaryGeneratorButtonGroup';
 import { SummaryUpdaterButtonGroup } from './SummaryUpdaterButtonGroup';
 import Analytics from '@/lib/analytics';
-import { RefObject } from 'react';
+import { RefObject, useMemo } from 'react';
+import { SummaryActionItems } from './SummaryActionItems';
+import { extractActionItemsFromSummary } from '@/lib/summaryTemplates';
 
 interface SummaryPanelProps {
   meeting: {
@@ -48,6 +50,7 @@ interface SummaryPanelProps {
   onTemplateSelect: (templateId: string, templateName: string) => void;
   isModelConfigLoading?: boolean;
   onOpenModelSettings?: (openFn: () => void) => void;
+  onTaskAdded?: () => void;
 }
 
 export function SummaryPanel({
@@ -83,9 +86,14 @@ export function SummaryPanel({
   selectedTemplate,
   onTemplateSelect,
   isModelConfigLoading = false,
-  onOpenModelSettings
+  onOpenModelSettings,
+  onTaskAdded,
 }: SummaryPanelProps) {
   const isSummaryLoading = summaryStatus === 'processing' || summaryStatus === 'summarizing' || summaryStatus === 'regenerating';
+  const actionItems = useMemo(
+    () => extractActionItemsFromSummary(aiSummary),
+    [aiSummary]
+  );
 
   return (
     <div className="flex-1 min-w-0 flex flex-col bg-white overflow-hidden">
@@ -196,7 +204,12 @@ export function SummaryPanel({
           />
         </div>
       ) : transcripts?.length > 0 && (
-        <div className="flex-1 overflow-y-auto min-h-0">
+        <div className="flex-1 overflow-y-auto min-h-0 flex flex-col">
+          <SummaryActionItems
+            meetingId={meeting.id}
+            actionItems={actionItems}
+            onTaskAdded={onTaskAdded}
+          />
           {summaryResponse && (
             <div className="fixed bottom-0 left-0 right-0 bg-white shadow-lg p-4 max-h-1/3 overflow-y-auto">
               <h3 className="text-lg font-semibold mb-2">Meeting Summary</h3>

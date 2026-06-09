@@ -78,6 +78,10 @@ export class ConfigService {
     return invoke<string>('get_language_preference');
   }
 
+  async setLanguagePreference(language: string): Promise<void> {
+    return invoke('set_language_preference', { language });
+  }
+
   /**
    * Get custom OpenAI configuration
    * @returns Promise with CustomOpenAIConfig or null if not configured

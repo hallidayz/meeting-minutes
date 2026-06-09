@@ -36,6 +36,7 @@ function convertTranscriptsToSegments(transcripts: Transcript[]): TranscriptSegm
         endTime: t.audio_end_time,
         text: t.text,
         confidence: t.confidence,
+        speaker: t.speaker,
     }));
 }
 
@@ -52,7 +53,6 @@ export function usePaginatedTranscripts({
     const [error, setError] = useState<string | null>(null);
 
     const offsetRef = useRef(0);
-    const loadedMeetingIdRef = useRef<string | null>(null);
     const isLoadingRef = useRef(false);
     const lastLoadTimeRef = useRef(0); // Debounce protection
 
@@ -157,10 +157,6 @@ export function usePaginatedTranscripts({
             reset();
             return;
         }
-
-        // Avoid reloading the same meeting
-        if (loadedMeetingIdRef.current === meetingId) return;
-        loadedMeetingIdRef.current = meetingId;
 
         reset();
 

@@ -15,12 +15,14 @@ import {
   SttModelTier,
   filterModelsByTier,
   getRecommendedModelForTier,
+  getWhisperModelDisplayName,
 } from '../lib/whisper';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 
 interface ModelManagerProps {
   selectedModel?: string;
   onModelSelect?: (modelName: string) => void;
+  onModelsChange?: (models: ModelInfo[]) => void;
   className?: string;
   autoSave?: boolean;
   /** Filter and highlight models for Whisper.cpp (accurate) or Fast-Whisper (fast). */
@@ -30,6 +32,7 @@ interface ModelManagerProps {
 export function ModelManager({
   selectedModel,
   onModelSelect,
+  onModelsChange,
   className = '',
   autoSave = false,
   modelTier = 'accurate',
@@ -53,6 +56,10 @@ export function ModelManager({
     onModelSelectRef.current = onModelSelect;
     autoSaveRef.current = autoSave;
   }, [onModelSelect, autoSave]);
+
+  useEffect(() => {
+    onModelsChange?.(models);
+  }, [models, onModelsChange]);
 
   // Load persisted downloading state from localStorage
   const getPersistedDownloadingModels = (): Set<string> => {
@@ -264,8 +271,9 @@ export function ModelManager({
 
   const saveModelSelection = async (modelName: string) => {
     try {
+      const provider = modelTier === 'fast' ? 'fastWhisper' : 'localWhisper';
       await invoke('api_save_transcript_config', {
-        provider: 'localWhisper',
+        provider,
         model: modelName,
         apiKey: null
       });
@@ -393,19 +401,7 @@ export function ModelManager({
     }
   };
 
-  const getDisplayName = (modelName: string): string => {
-    const modelNameMapping: { [key: string]: string } = {
-      "base": "Small",
-      "small": "Medium",
-      "large-v3-turbo": "Large"
-    };
-
-    const basicModelNames = ["base", "small", "large-v3-turbo"];
-    if (basicModelNames.includes(modelName)) {
-      return modelNameMapping[modelName] || modelName;
-    }
-    return `Whisper ${modelName}`;
-  };
+  const getDisplayName = getWhisperModelDisplayName;
 
   if (loading) {
     return (

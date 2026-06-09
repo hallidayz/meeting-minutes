@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Summary, SummaryResponse } from '@/types';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
@@ -16,6 +16,7 @@ import { useTemplates } from '@/hooks/meeting-details/useTemplates';
 import { useCopyOperations } from '@/hooks/meeting-details/useCopyOperations';
 import { useMeetingOperations } from '@/hooks/meeting-details/useMeetingOperations';
 import { useConfig } from '@/contexts/ConfigContext';
+import { extractActionItemsFromSummary } from '@/lib/summaryTemplates';
 
 export default function PageContent({
   meeting,
@@ -55,6 +56,7 @@ export default function PageContent({
   const [customPrompt, setCustomPrompt] = useState<string>('');
   const [isRecording] = useState(false);
   const [summaryResponse] = useState<SummaryResponse | null>(null);
+  const [tasksRefreshKey, setTasksRefreshKey] = useState(0);
 
   // Ref to store the modal open function from SummaryGeneratorButtonGroup
   const openModelSettingsRef = useRef<(() => void) | null>(null);
@@ -116,6 +118,15 @@ export default function PageContent({
     meeting,
   });
 
+  const actionItems = useMemo(
+    () => extractActionItemsFromSummary(meetingData.aiSummary),
+    [meetingData.aiSummary]
+  );
+
+  const handleTaskAdded = useCallback(() => {
+    setTasksRefreshKey((k) => k + 1);
+  }, []);
+
   // Track page view
   useEffect(() => {
     Analytics.trackPageView('meeting_details');
@@ -150,18 +161,21 @@ export default function PageContent({
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, ease: 'easeOut' }}
-      className="flex flex-col h-screen bg-gray-50"
+      className="flex flex-col h-full min-h-0 bg-background"
     >
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-1 overflow-hidden flex-col">
-        <div className="px-4 pt-2 border-b bg-white">
-          <TabsList>
-            <TabsTrigger value="transcript">Transcript</TabsTrigger>
-            <TabsTrigger value="summary">Summary</TabsTrigger>
-            <TabsTrigger value="tasks">Tasks</TabsTrigger>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-1 min-h-0 overflow-hidden flex-col">
+        <div className="flex-shrink-0 px-6 pt-4 border-b border-border/60 bg-card">
+          <h1 className="text-xl font-semibold text-foreground mb-3 truncate">
+            {meetingData.meetingTitle || meeting.title || 'Meeting'}
+          </h1>
+          <TabsList className="bg-muted/50 p-1 rounded-xl">
+            <TabsTrigger value="transcript" className="rounded-lg data-[state=active]:bg-card data-[state=active]:shadow-sm">Transcript</TabsTrigger>
+            <TabsTrigger value="summary" className="rounded-lg data-[state=active]:bg-card data-[state=active]:shadow-sm">Summary</TabsTrigger>
+            <TabsTrigger value="tasks" className="rounded-lg data-[state=active]:bg-card data-[state=active]:shadow-sm">Tasks</TabsTrigger>
           </TabsList>
         </div>
-        <div className="flex flex-1 overflow-hidden">
-          <TabsContent value="transcript" className="flex flex-1 overflow-hidden m-0 data-[state=inactive]:hidden">
+        <div className="flex flex-1 min-h-0 overflow-hidden">
+          <TabsContent value="transcript" className="flex flex-1 min-h-0 h-full w-full overflow-hidden m-0 mt-0 data-[state=inactive]:hidden">
             <TranscriptPanel
               transcripts={meetingData.transcripts}
               customPrompt={customPrompt}
@@ -179,7 +193,7 @@ export default function PageContent({
               onLoadMore={onLoadMore}
             />
           </TabsContent>
-          <TabsContent value="summary" className="flex flex-1 overflow-hidden m-0 data-[state=inactive]:hidden">
+          <TabsContent value="summary" className="flex flex-1 min-h-0 h-full w-full overflow-hidden m-0 mt-0 data-[state=inactive]:hidden">
             <SummaryPanel
               meeting={meeting}
               meetingTitle={meetingData.meetingTitle}
@@ -214,12 +228,14 @@ export default function PageContent({
               onTemplateSelect={templates.handleTemplateSelection}
               isModelConfigLoading={false}
               onOpenModelSettings={handleRegisterModalOpen}
+              onTaskAdded={handleTaskAdded}
             />
           </TabsContent>
-          <TabsContent value="tasks" className="flex flex-1 overflow-hidden m-0 data-[state=inactive]:hidden w-full">
+          <TabsContent value="tasks" className="flex flex-1 min-h-0 h-full w-full overflow-hidden m-0 mt-0 data-[state=inactive]:hidden">
             <MeetingTasksPanel
               meetingId={meeting.id}
-              actionItems={meetingData.aiSummary?.ActionItems?.blocks?.map((b: { content?: string }) => b.content).filter(Boolean) as string[] | undefined}
+              actionItems={actionItems}
+              refreshTrigger={tasksRefreshKey}
             />
           </TabsContent>
         </div>

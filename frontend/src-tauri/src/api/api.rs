@@ -31,6 +31,8 @@ pub struct ApiResponse<T> {
 pub struct Meeting {
     pub id: String,
     pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -138,6 +140,8 @@ pub struct MeetingTranscript {
     pub audio_end_time: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
 }
 
 /// Meeting metadata without transcripts (for pagination)
@@ -342,6 +346,7 @@ pub async fn api_get_meetings<R: Runtime>(
                 .map(|m| Meeting {
                     id: m.id,
                     title: m.title,
+                    created_at: Some(m.created_at.0.to_rfc3339()),
                 })
                 .collect();
             Ok(result)
@@ -645,28 +650,23 @@ pub async fn api_get_transcript_config<R: Runtime>(
 
     match SettingsRepository::get_transcript_config(pool).await {
         Ok(Some(config)) => {
-            // Migrate legacy Parakeet installs to Fast-Whisper (whisper-rs greedy profile)
-            let (provider, model) = if config.provider == "parakeet" {
-                let migrated_provider = "fastWhisper".to_string();
-                let migrated_model =
-                    crate::whisper_engine::recommended_fast_whisper_model().to_string();
+            let (provider, model) =
+                crate::whisper_engine::normalize_transcript_config(&config.provider, &config.model);
+
+            if provider != config.provider || model != config.model {
                 log_info!(
-                    "Migrating parakeet transcript config to fastWhisper / {}",
-                    migrated_model
+                    "Persisting migrated transcript config: {} / {} → {} / {}",
+                    config.provider,
+                    config.model,
+                    provider,
+                    model
                 );
-                if let Err(e) = SettingsRepository::save_transcript_config(
-                    pool,
-                    &migrated_provider,
-                    &migrated_model,
-                )
-                .await
+                if let Err(e) =
+                    SettingsRepository::save_transcript_config(pool, &provider, &model).await
                 {
-                    log_warn!("Failed to persist parakeet migration: {}", e);
+                    log_warn!("Failed to persist transcript migration: {}", e);
                 }
-                (migrated_provider, migrated_model)
-            } else {
-                (config.provider, config.model)
-            };
+            }
 
             log_info!(
                 "Found transcript config: provider={}, model={}",
@@ -938,6 +938,7 @@ pub async fn api_get_meeting_transcripts<R: Runtime>(
                     audio_start_time: t.audio_start_time,
                     audio_end_time: t.audio_end_time,
                     duration: t.duration,
+                    speaker: t.speaker,
                 })
                 .collect::<Vec<_>>();
 

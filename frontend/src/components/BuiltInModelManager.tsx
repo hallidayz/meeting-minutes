@@ -20,6 +20,8 @@ interface ModelInfo {
   context_size: number;
   description: string;
   gguf_file: string;
+  download_url?: string;
+  min_ram_gb?: number;
 }
 
 interface DownloadProgressInfo {
@@ -40,6 +42,7 @@ export function BuiltInModelManager({ selectedModel, onModelSelect }: BuiltInMod
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
   const [downloadProgressInfo, setDownloadProgressInfo] = useState<Record<string, DownloadProgressInfo>>({});
   const [downloadingModels, setDownloadingModels] = useState<Set<string>>(new Set());
+  const [deviceRecommended, setDeviceRecommended] = useState<string[]>([]);
 
   const fetchModels = async () => {
     try {
@@ -65,6 +68,9 @@ export function BuiltInModelManager({ selectedModel, onModelSelect }: BuiltInMod
 
   useEffect(() => {
     fetchModels();
+    invoke<string[]>('builtin_ai_get_device_recommended_models')
+      .then(setDeviceRecommended)
+      .catch(console.error);
   }, []);
 
   // Listen for download progress events
@@ -269,10 +275,22 @@ export function BuiltInModelManager({ selectedModel, onModelSelect }: BuiltInMod
     );
   }
 
+  const sourceLabel = (url?: string) => {
+    if (!url) return 'Unknown source';
+    if (url.includes('meetily.towardsgeneralintelligence.com')) return 'AI Guardian CDN';
+    if (url.includes('huggingface.co')) return 'HuggingFace (open source)';
+    return new URL(url).hostname;
+  };
+
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
+      <div className="mb-4 space-y-2">
         <h4 className="text-sm font-bold">Built-in AI Models</h4>
+        <p className="text-xs text-gray-600 leading-relaxed">
+          Offline summarization — no API key required. Models download as open-source GGUF files to{' '}
+          <code className="text-[11px] bg-gray-100 px-1 rounded">~/Library/Application Support/AI Guardian/models/summary/</code>{' '}
+          (macOS). Gemma models are hosted on the AI Guardian CDN; additional models download directly from HuggingFace based on your device RAM.
+        </p>
       </div>
 
       <div className="grid gap-4">
@@ -284,6 +302,7 @@ export function BuiltInModelManager({ selectedModel, onModelSelect }: BuiltInMod
           const isNotDownloaded = model.status.type === 'not_downloaded';
           const isCorrupted = model.status.type === 'corrupted';
           const isError = model.status.type === 'error';
+          const isRecommended = deviceRecommended.includes(model.name);
 
           return (
             <div
@@ -308,6 +327,11 @@ export function BuiltInModelManager({ selectedModel, onModelSelect }: BuiltInMod
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="text-base font-bold text-gray-900">{model.display_name || model.name}</span>
+                    {isRecommended && (
+                      <span className="px-2 py-0.5 text-xs font-medium bg-amber-100 text-amber-800 rounded">
+                        Recommended for your device
+                      </span>
+                    )}
                     {isAvailable && (
                       <>
                         <span className="text-xs text-green-600 font-medium flex items-center gap-1">
@@ -351,8 +375,18 @@ export function BuiltInModelManager({ selectedModel, onModelSelect }: BuiltInMod
                           : 'An error occurred'}
                       </p>
                     )}
-                    <div className="text-xs text-gray-500">
-                      <span>{model.size_mb}MB • {model.context_size} tokens</span>
+                    <div className="text-xs text-gray-500 space-y-0.5">
+                      <div>
+                        <span>{model.size_mb}MB • {model.context_size} tokens</span>
+                        {model.min_ram_gb ? (
+                          <span className="ml-2">• {model.min_ram_gb}GB+ RAM</span>
+                        ) : null}
+                      </div>
+                      {model.download_url && (
+                        <div className="truncate" title={model.download_url}>
+                          Source: {sourceLabel(model.download_url)}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>

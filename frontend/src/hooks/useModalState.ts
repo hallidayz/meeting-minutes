@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
 import { TranscriptModelProps } from '@/components/TranscriptSettings';
+import { parseTranscriptionErrorPayload, shouldReportTranscriptionError } from '@/lib/transcriptionErrors';
 
 export type ModalType =
   | 'modelSettings'
@@ -132,17 +133,28 @@ export function useModalState(transcriptModelConfig?: TranscriptModelProps): Use
     const setupTranscriptionErrorListener = async () => {
       try {
         console.log('Setting up transcription-error listener...');
-        unlistenFn = await listen<{ error: string, userMessage: string, actionable: boolean }>('transcription-error', (event) => {
-          console.log('Transcription error received:', event.payload);
-          const { userMessage, actionable } = event.payload;
+        unlistenFn = await listen('transcription-error', (event) => {
+          const parsed = parseTranscriptionErrorPayload(event.payload);
+          if (!parsed) {
+            console.warn(
+              '[useModalState] Ignoring malformed transcription-error payload:',
+              JSON.stringify(event.payload)
+            );
+            return;
+          }
 
-          if (actionable) {
-            // This is a model-related error that requires user action
-            showModal('modelSelector', userMessage);
-          } else {
-            // Show toast instead of modal for non-actionable errors (consistent with sidebar)
-            toast.error('', {
-              description: userMessage,
+          if (!shouldReportTranscriptionError(parsed.error)) {
+            return;
+          }
+
+          console.warn('[useModalState] Transcription error:', parsed);
+
+          if (parsed.actionable) {
+            showModal('modelSelector', parsed.userMessage);
+          } else if (parsed.userMessage) {
+            toast.error('Transcription issue', {
+              id: 'transcription-error',
+              description: parsed.userMessage,
               duration: 5000,
             });
           }

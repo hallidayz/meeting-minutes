@@ -5,7 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { PermissionStatus, OnboardingPermissions } from '@/types/onboarding';
 
-const DEFAULT_WHISPER_MODEL = 'large-v3-turbo-q5_0';
+const DEFAULT_WHISPER_MODEL = 'large-v3-turbo';
 
 interface OnboardingStatus {
   version: string;

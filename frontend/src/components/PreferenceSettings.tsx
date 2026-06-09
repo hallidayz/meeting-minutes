@@ -18,9 +18,27 @@ export function PreferenceSettings() {
   } = useConfig();
 
   const [notificationsEnabled, setNotificationsEnabled] = useState<boolean | null>(null);
+  const [userEmail, setUserEmail] = useState('');
+  const [emailSaved, setEmailSaved] = useState(false);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [previousNotificationsEnabled, setPreviousNotificationsEnabled] = useState<boolean | null>(null);
   const hasTrackedViewRef = useRef(false);
+
+  useEffect(() => {
+    invoke<string | null>('get_user_email')
+      .then((email) => setUserEmail(email ?? ''))
+      .catch(console.error);
+  }, []);
+
+  const handleSaveEmail = async () => {
+    try {
+      await invoke('set_user_email', { email: userEmail });
+      setEmailSaved(true);
+      setTimeout(() => setEmailSaved(false), 2000);
+    } catch (error) {
+      console.error('Failed to save email:', error);
+    }
+  };
 
   // Lazy load preferences on mount (only loads if not already cached)
   useEffect(() => {
@@ -133,30 +151,54 @@ export function PreferenceSettings() {
     }
   };
 
-  // Show loading only if we're actually loading and don't have cached data
-  if (isLoadingPreferences && !notificationSettings && !storageLocations) {
-    return <div className="max-w-2xl mx-auto p-6">Loading Preferences...</div>
-  }
+  const preferencesLoading =
+    (isLoadingPreferences && !notificationSettings && !storageLocations) ||
+    (notificationsEnabled === null && !isLoadingPreferences);
 
-  // Show loading if notificationsEnabled hasn't been determined yet
-  if (notificationsEnabled === null && !isLoadingPreferences) {
-    return <div className="max-w-2xl mx-auto p-6">Loading Preferences...</div>
-  }
-
-  // Ensure we have a boolean value for the Switch component
   const notificationsEnabledValue = notificationsEnabled ?? false;
 
   return (
     <div className="space-y-6">
+      {/* Profile Email — used when emailing tasks via your OS default mail app */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
+        <h3 className="text-lg font-semibold text-gray-900 mb-2">Profile Email</h3>
+        <p className="text-sm text-gray-600 mb-4">
+          Used as the default recipient when you email tasks from the Tasks page. Opens your system mail app (Mail, Outlook, etc.).
+        </p>
+        <div className="flex gap-2 max-w-md">
+          <input
+            type="email"
+            value={userEmail}
+            onChange={(e) => setUserEmail(e.target.value)}
+            onBlur={handleSaveEmail}
+            placeholder="you@example.com"
+            className="flex-1 px-3 py-2 border rounded-md text-sm"
+          />
+          <button
+            onClick={handleSaveEmail}
+            className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-100"
+          >
+            {emailSaved ? 'Saved' : 'Save'}
+          </button>
+        </div>
+      </div>
+
       {/* Notifications Section */}
       <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Notifications</h3>
-            <p className="text-sm text-gray-600">Enable or disable notifications of start and end of meeting</p>
+        {preferencesLoading ? (
+          <div className="animate-pulse space-y-3">
+            <div className="h-5 bg-gray-200 rounded w-1/4" />
+            <div className="h-4 bg-gray-200 rounded w-3/5" />
           </div>
-          <Switch checked={notificationsEnabledValue} onCheckedChange={setNotificationsEnabled} />
-        </div>
+        ) : (
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">Notifications</h3>
+              <p className="text-sm text-gray-600">Enable or disable notifications of start and end of meeting</p>
+            </div>
+            <Switch checked={notificationsEnabledValue} onCheckedChange={setNotificationsEnabled} />
+          </div>
+        )}
       </div>
 
       {/* Data Storage Locations Section */}
@@ -200,12 +242,17 @@ export function PreferenceSettings() {
           {/* Recordings Location */}
           <div className="p-4 border rounded-lg bg-gray-50">
             <div className="font-medium mb-2">Meeting Recordings</div>
-            <div className="text-sm text-gray-600 mb-3 break-all font-mono text-xs">
-              {storageLocations?.recordings || 'Loading...'}
-            </div>
+            {preferencesLoading ? (
+              <div className="animate-pulse h-4 bg-gray-200 rounded w-full mb-3" />
+            ) : (
+              <div className="text-sm text-gray-600 mb-3 break-all font-mono text-xs">
+                {storageLocations?.recordings || 'Unavailable'}
+              </div>
+            )}
             <button
               onClick={() => handleOpenFolder('recordings')}
-              className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-100 transition-colors"
+              disabled={preferencesLoading}
+              className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-100 transition-colors disabled:opacity-50"
             >
               <FolderOpen className="w-4 h-4" />
               Open Folder

@@ -234,6 +234,7 @@ class IndexedDBService {
       const storedTranscript: StoredTranscript = {
         ...transcript,
         meetingId,
+        sequenceId: transcript.sequenceId ?? transcript.sequence_id ?? 0,
         storedAt: Date.now()
       };
 

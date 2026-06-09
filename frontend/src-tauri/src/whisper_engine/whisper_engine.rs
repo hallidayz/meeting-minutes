@@ -41,17 +41,52 @@ pub fn recommended_whisper_model() -> &'static str {
 
     if cfg!(target_os = "macos") {
         if ram_gb >= 8 {
-            "large-v3-turbo-q5_0"
+            "large-v3-turbo"
         } else {
             "base-q5_0"
         }
     } else if ram_gb >= 16 {
-        "large-v3-turbo-q5_0"
+        "large-v3-turbo"
     } else if ram_gb >= 8 {
-        "small-q5_0"
+        "large-v3-turbo"
     } else {
         "base-q5_0"
     }
+}
+
+/// Normalize legacy provider/model choices to Whisper.cpp + recommended model.
+pub fn normalize_transcript_config(provider: &str, model: &str) -> (String, String) {
+    let provider = match provider {
+        "parakeet" | "fastWhisper" => {
+            log::info!("Migrating transcript provider '{}' → localWhisper (Whisper.cpp)", provider);
+            DEFAULT_TRANSCRIPT_PROVIDER.to_string()
+        }
+        other => other.to_string(),
+    };
+
+    if provider != "localWhisper" {
+        return (provider, model.to_string());
+    }
+
+    let recommended = recommended_whisper_model().to_string();
+    let fast_only = matches!(
+        model,
+        "base-q5_0" | "small-q5_0" | "tiny-q5_0" | "base" | "tiny" | "small"
+    );
+    let legacy_quantized = model.contains("q5_0") || model.contains("q4_0");
+
+    let model = if fast_only || legacy_quantized || model == "large-v3" {
+        log::info!(
+            "Upgrading transcript model '{}' → '{}' for Whisper.cpp accuracy",
+            model,
+            recommended
+        );
+        recommended
+    } else {
+        model.to_string()
+    };
+
+    (provider, model)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -460,7 +495,7 @@ impl WhisperEngine {
 
         // Check for overall repetition ratio
         let final_text = cleaned_words.join(" ");
-        if Self::calculate_repetition_ratio(&final_text) > 0.7 {
+        if Self::calculate_repetition_ratio(&final_text) > 0.92 {
             // Performance optimization: reduce repetition ratio logging to debug level
             perf_debug!("High repetition ratio detected, filtering out: '{}'", final_text);
             return String::new();
@@ -487,7 +522,7 @@ impl WhisperEngine {
         ];
 
         for pattern in &meaningless_patterns {
-            if text_lower.contains(pattern) {
+            if text_lower.trim() == *pattern {
                 return true;
             }
         }

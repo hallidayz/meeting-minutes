@@ -183,7 +183,25 @@ export function filterModelsByTier(models: ModelInfo[], tier: SttModelTier): Mod
 }
 
 export function getRecommendedModelForTier(tier: SttModelTier): string {
-  return tier === 'accurate' ? 'large-v3-turbo-q5_0' : 'base-q5_0';
+  return tier === 'accurate' ? 'large-v3-turbo' : 'base-q5_0';
+}
+
+export function isModelAvailable(status: ModelStatus): boolean {
+  return status === 'Available';
+}
+
+export function getDownloadedModelsForTier(models: ModelInfo[], tier: SttModelTier): ModelInfo[] {
+  return filterModelsByTier(models, tier).filter((m) => isModelAvailable(m.status));
+}
+
+export function getWhisperModelDisplayName(modelName: string): string {
+  const mapping: Record<string, string> = {
+    base: 'Small',
+    small: 'Medium',
+    'large-v3-turbo': 'Large',
+  };
+  if (modelName in mapping) return mapping[modelName];
+  return `Whisper ${modelName}`;
 }
 
 // Helper functions

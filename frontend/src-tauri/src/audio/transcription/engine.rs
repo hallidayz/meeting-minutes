@@ -59,6 +59,72 @@ fn default_transcript_config() -> crate::api::api::TranscriptConfig {
     }
 }
 
+/// Prefer the configured model when downloaded; otherwise use the best available fallback.
+fn resolve_whisper_model_to_load(
+    models: &[crate::whisper_engine::ModelInfo],
+    configured_model: &str,
+) -> Result<String, String> {
+    use crate::whisper_engine::ModelStatus;
+
+    let available: Vec<_> = models
+        .iter()
+        .filter(|m| matches!(m.status, ModelStatus::Available))
+        .collect();
+
+    if available.is_empty() {
+        return Err(
+            "No Whisper models are downloaded. Please download a model from Settings before recording."
+                .to_string(),
+        );
+    }
+
+    if let Some(preferred) = models.iter().find(|m| m.name == configured_model) {
+        match preferred.status {
+            ModelStatus::Available => return Ok(configured_model.to_string()),
+            ModelStatus::Downloading { progress } => {
+                return Err(format!(
+                    "Model '{}' is still downloading ({}%). Please wait for it to finish.",
+                    configured_model, progress
+                ));
+            }
+            ModelStatus::Missing => {
+                warn!(
+                    "Configured model '{}' is not downloaded; falling back to '{}'",
+                    configured_model, available[0].name
+                );
+            }
+            ModelStatus::Error(ref err) => {
+                warn!(
+                    "Configured model '{}' has error ({}); falling back to '{}'",
+                    configured_model, err, available[0].name
+                );
+            }
+            ModelStatus::Corrupted { .. } => {
+                warn!(
+                    "Configured model '{}' is corrupted; falling back to '{}'",
+                    configured_model, available[0].name
+                );
+            }
+        }
+    } else {
+        warn!(
+            "Configured model '{}' is not supported; falling back to '{}'",
+            configured_model, available[0].name
+        );
+    }
+
+    Ok(available[0].name.clone())
+}
+
+fn configured_model_is_available(
+    models: &[crate::whisper_engine::ModelInfo],
+    configured_model: &str,
+) -> bool {
+    models.iter().any(|m| {
+        m.name == configured_model && matches!(m.status, crate::whisper_engine::ModelStatus::Available)
+    })
+}
+
 /// Validate that transcription models (Whisper or Parakeet) are ready before starting recording
 pub async fn validate_transcription_model_ready<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     // Check transcript configuration to determine which engine to validate
@@ -291,14 +357,25 @@ pub async fn get_or_init_whisper<R: Runtime>(
                     );
                     return Ok(engine);
                 } else {
-                    info!(
-                        "🔄 Loaded model '{}' doesn't match saved config '{}', reloading correct model...",
-                        current_model, expected_model
-                    );
-                    // Unload the incorrect model
-                    engine.unload_model().await;
-                    info!("📉 Unloaded incorrect model '{}'", current_model);
-                    // Continue to model loading logic below
+                    let models = engine
+                        .discover_models()
+                        .await
+                        .map_err(|e| format!("Failed to discover models: {}", e))?;
+
+                    if configured_model_is_available(&models, expected_model) {
+                        info!(
+                            "🔄 Loaded model '{}' doesn't match saved config '{}', reloading configured model...",
+                            current_model, expected_model
+                        );
+                        engine.unload_model().await;
+                        info!("📉 Unloaded model '{}'", current_model);
+                    } else {
+                        warn!(
+                            "Configured model '{}' is not downloaded; keeping loaded model '{}'",
+                            expected_model, current_model
+                        );
+                        return Ok(engine);
+                    }
                 }
             } else {
                 // No specific config saved, accept currently loaded model
@@ -390,72 +467,20 @@ pub async fn get_or_init_whisper<R: Runtime>(
         );
     }
 
-    // Check if the desired model is available
-    let model_info = models.iter().find(|model| model.name == model_to_load);
-
-    if model_info.is_none() {
-        info!(
-            "Model '{}' not found in discovered models. Available models: {:?}",
-            model_to_load,
-            models.iter().map(|m| &m.name).collect::<Vec<_>>()
+    let resolved_model = resolve_whisper_model_to_load(&models, &model_to_load)?;
+    if resolved_model != model_to_load {
+        warn!(
+            "Using fallback Whisper model '{}' (configured: '{}')",
+            resolved_model, model_to_load
         );
     }
 
-    match model_info {
-        Some(model) => {
-            match model.status {
-                crate::whisper_engine::ModelStatus::Available => {
-                    info!("Loading model: {}", model_to_load);
-                    engine
-                        .load_model(&model_to_load)
-                        .await
-                        .map_err(|e| format!("Failed to load model '{}': {}", model_to_load, e))?;
-                    info!("✅ Model '{}' loaded successfully", model_to_load);
-                }
-                crate::whisper_engine::ModelStatus::Missing => {
-                    return Err(format!(
-                        "Model '{}' is not downloaded. Please download it first from the settings.",
-                        model_to_load
-                    ));
-                }
-                crate::whisper_engine::ModelStatus::Downloading { progress } => {
-                    return Err(format!("Model '{}' is currently downloading ({}%). Please wait for it to complete.", model_to_load, progress));
-                }
-                crate::whisper_engine::ModelStatus::Error(ref err) => {
-                    return Err(format!("Model '{}' has an error: {}. Please check the model or try downloading it again.", model_to_load, err));
-                }
-                crate::whisper_engine::ModelStatus::Corrupted { .. } => {
-                    return Err(format!("Model '{}' is corrupted. Please delete it and download again from the settings.", model_to_load));
-                }
-            }
-        }
-        None => {
-            // Check if we have any available models and try to load the first one
-            let available_models: Vec<_> = models
-                .iter()
-                .filter(|m| matches!(m.status, crate::whisper_engine::ModelStatus::Available))
-                .collect();
-
-            if let Some(fallback_model) = available_models.first() {
-                warn!(
-                    "Model '{}' not found, falling back to available model: '{}'",
-                    model_to_load, fallback_model.name
-                );
-                engine.load_model(&fallback_model.name).await.map_err(|e| {
-                    format!(
-                        "Failed to load fallback model '{}': {}",
-                        fallback_model.name, e
-                    )
-                })?;
-                info!(
-                    "✅ Fallback model '{}' loaded successfully",
-                    fallback_model.name
-                );
-            } else {
-                return Err(format!("Model '{}' is not supported and no other models are available. Please download a model from the settings.", model_to_load));
-            }
-        }
-    }
+    info!("Loading Whisper model: {}", resolved_model);
+    engine
+        .load_model(&resolved_model)
+        .await
+        .map_err(|e| format!("Failed to load model '{}': {}", resolved_model, e))?;
+    info!("✅ Model '{}' loaded successfully", resolved_model);
 
     // Ensure STT profile matches saved provider
     if let Ok(Some(config)) =

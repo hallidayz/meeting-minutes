@@ -31,6 +31,7 @@ export interface TranscriptUpdate {
   audio_start_time: number; // Seconds from recording start
   audio_end_time: number;   // Seconds from recording start
   duration: number;          // Segment duration in seconds
+  speaker?: string;
 }
 
 export interface Block {
@@ -119,4 +120,7 @@ export interface GuardianTask {
   status: 'todo' | 'inprogress' | 'done';
   meeting_id: string | null;
   created_at: string;
+  notes?: string | null;
+  meeting_name?: string | null;
+  meeting_date?: string | null;
 }

@@ -307,6 +307,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
             id: `${Date.now()}-${transcriptCounter++}`,
             text: update.text,
             timestamp: update.timestamp,
+            speaker: update.speaker,
             sequence_id: update.sequence_id,
             chunk_start_time: update.chunk_start_time,
             is_partial: update.is_partial,
@@ -321,9 +322,11 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
           transcriptBuffer.set(update.sequence_id, newTranscript);
           console.log(`✅ MAIN LISTENER: Buffered transcript with sequence_id ${update.sequence_id}. Buffer size: ${transcriptBuffer.size}, Last processed: ${lastProcessedSequence}`);
 
-          // Save to IndexedDB (non-blocking)
-          if (currentMeetingId) {
-            indexedDBService.saveTranscript(currentMeetingId, update)
+          // Save to IndexedDB (non-blocking) — use sessionStorage fallback for race on recording start
+          const meetingId =
+            currentMeetingId ?? sessionStorage.getItem('indexeddb_current_meeting_id');
+          if (meetingId) {
+            indexedDBService.saveTranscript(meetingId, update)
               .catch(err => console.warn('IndexedDB save failed:', err));
           }
 
@@ -417,6 +420,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
       id: update.sequence_id ? update.sequence_id.toString() : Date.now().toString(),
       text: update.text,
       timestamp: update.timestamp,
+      speaker: update.speaker,
       sequence_id: update.sequence_id || 0,
       chunk_start_time: update.chunk_start_time,
       is_partial: update.is_partial,

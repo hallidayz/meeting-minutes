@@ -21,6 +21,7 @@ pub enum NotificationType {
     RecordingResumed,
     TranscriptionComplete,
     MeetingReminder(u64), // Duration in minutes
+    TaskReminder,
     SystemError(String),
     Test, // For testing notifications
 }

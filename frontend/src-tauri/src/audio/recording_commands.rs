@@ -45,6 +45,58 @@ static TRANSCRIPTION_TASK: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 // Listener ID for proper cleanup - prevents microphone from staying active after recording stops
 static TRANSCRIPT_LISTENER_ID: Mutex<Option<tauri::EventId>> = Mutex::new(None);
 
+#[cfg(target_os = "macos")]
+type SafeDevicePair = (
+    Option<super::devices::configuration::AudioDevice>,
+    Option<super::devices::configuration::AudioDevice>,
+);
+
+fn resolve_microphone_fallback(
+    #[cfg(target_os = "macos")] safe_defaults: Option<&SafeDevicePair>,
+) -> Result<Option<Arc<super::devices::configuration::AudioDevice>>, String> {
+    #[cfg(target_os = "macos")]
+    if let Some((Some(ref mic), _)) = safe_defaults {
+        info!("✅ Using safe default microphone: '{}'", mic.name);
+        return Ok(Some(Arc::new(mic.clone())));
+    }
+
+    match default_input_device() {
+        Ok(device) => {
+            info!("✅ Using default microphone: '{}'", device.name);
+            Ok(Some(Arc::new(device)))
+        }
+        Err(e) => {
+            error!("❌ No microphone available");
+            Err(format!("No microphone device available: {}", e))
+        }
+    }
+}
+
+fn resolve_system_audio_fallback(
+    #[cfg(target_os = "macos")] safe_defaults: Option<&SafeDevicePair>,
+) -> Option<Arc<super::devices::configuration::AudioDevice>> {
+    #[cfg(target_os = "macos")]
+    if let Some((_, Some(ref speaker))) = safe_defaults {
+        info!(
+            "✅ Using safe default system audio (Remote channel): '{}'",
+            speaker.name
+        );
+        return Some(Arc::new(speaker.clone()));
+    }
+
+    match default_output_device() {
+        Ok(device) => {
+            info!("✅ Using default system audio (Remote channel): '{}'", device.name);
+            Some(Arc::new(device))
+        }
+        Err(e) => {
+            warn!("⚠️ No system audio available for Remote channel: {}", e);
+            warn!("   Recording will continue with microphone only");
+            None
+        }
+    }
+}
+
 // ============================================================================
 // PUBLIC TYPES
 // ============================================================================
@@ -94,11 +146,12 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
 
         // Emit error event for frontend - actionable: false to show toast instead of modal
         // (download progress is already shown in top-right toast)
-        let _ = app.emit("transcription-error", serde_json::json!({
-            "error": validation_error,
-            "userMessage": "Recording cannot start: Transcription model is still downloading. Please wait for the download to complete.",
-            "actionable": false
-        }));
+        transcription::TranscriptionErrorEvent::new(
+            validation_error.clone(),
+            "Recording cannot start: Transcription model is still downloading. Please wait for the download to complete.",
+            false,
+        )
+        .emit(&app);
 
         return Err(validation_error);
     }
@@ -124,8 +177,21 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
             }
         };
 
+    // macOS: Bluetooth-safe defaults so Core Audio captures the active Remote channel
+    #[cfg(target_os = "macos")]
+    let safe_defaults = {
+        use crate::audio::devices::fallback::get_safe_recording_devices_macos;
+        match get_safe_recording_devices_macos() {
+            Ok(pair) => Some(pair),
+            Err(e) => {
+                warn!("⚠️ Safe device detection failed: {} — falling back to system defaults", e);
+                None
+            }
+        }
+    };
+
     // ============================================================================
-    // MICROPHONE DEVICE RESOLUTION: Preference → Default → Error
+    // MICROPHONE DEVICE RESOLUTION: Preference → Safe default → System default
     // ============================================================================
     let microphone_device = match preferred_mic_name {
         Some(pref_name) => {
@@ -137,79 +203,50 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
                 }
                 Err(e) => {
                     warn!("⚠️ Preferred microphone '{}' not available: {}", pref_name, e);
-                    warn!("   Falling back to system default microphone...");
-                    match default_input_device() {
-                        Ok(device) => {
-                            info!("✅ Using default microphone: '{}'", device.name);
-                            Some(Arc::new(device))
-                        }
-                        Err(default_err) => {
-                            error!("❌ No microphone available (preferred and default both failed)");
-                            return Err(format!(
-                                "No microphone device available. Preferred device '{}' not found, and default microphone unavailable: {}",
-                                pref_name, default_err
-                            ));
-                        }
-                    }
+                    warn!("   Falling back to safe/system default microphone...");
+                    resolve_microphone_fallback(
+                        #[cfg(target_os = "macos")]
+                        safe_defaults.as_ref(),
+                    )?
                 }
             }
         }
         None => {
-            info!("🎤 No microphone preference set, using system default");
-            match default_input_device() {
-                Ok(device) => {
-                    info!("✅ Using default microphone: '{}'", device.name);
-                    Some(Arc::new(device))
-                }
-                Err(e) => {
-                    error!("❌ No default microphone available");
-                    return Err(format!("No microphone device available: {}", e));
-                }
-            }
+            info!("🎤 No microphone preference set, using safe/system default");
+            resolve_microphone_fallback(
+                #[cfg(target_os = "macos")]
+                safe_defaults.as_ref(),
+            )?
         }
     };
 
     // ============================================================================
-    // SYSTEM AUDIO DEVICE RESOLUTION: Preference → Default → None (optional)
+    // SYSTEM AUDIO (Remote channel): Preference → Safe default → System default
     // ============================================================================
     let system_device = match preferred_system_name {
         Some(pref_name) => {
             info!("🔊 Attempting to use preferred system audio: '{}'", pref_name);
             match parse_audio_device(&pref_name) {
                 Ok(device) => {
-                    info!("✅ Using preferred system audio: '{}'", device.name);
+                    info!("✅ Using preferred system audio (Remote channel): '{}'", device.name);
                     Some(Arc::new(device))
                 }
                 Err(e) => {
                     warn!("⚠️ Preferred system audio '{}' not available: {}", pref_name, e);
-                    warn!("   Falling back to system default...");
-                    match default_output_device() {
-                        Ok(device) => {
-                            info!("✅ Using default system audio: '{}'", device.name);
-                            Some(Arc::new(device))
-                        }
-                        Err(default_err) => {
-                            warn!("⚠️ No system audio available (preferred and default both failed): {}", default_err);
-                            warn!("   Recording will continue with microphone only");
-                            None // System audio is optional
-                        }
-                    }
+                    warn!("   Falling back to safe/system default for Remote channel...");
+                    resolve_system_audio_fallback(
+                        #[cfg(target_os = "macos")]
+                        safe_defaults.as_ref(),
+                    )
                 }
             }
         }
         None => {
-            info!("🔊 No system audio preference set, using system default");
-            match default_output_device() {
-                Ok(device) => {
-                    info!("✅ Using default system audio: '{}'", device.name);
-                    Some(Arc::new(device))
-                }
-                Err(e) => {
-                    warn!("⚠️ No default system audio available: {}", e);
-                    warn!("   Recording will continue with microphone only");
-                    None // System audio is optional
-                }
-            }
+            info!("🔊 No system audio preference — resolving Remote channel capture device");
+            resolve_system_audio_fallback(
+                #[cfg(target_os = "macos")]
+                safe_defaults.as_ref(),
+            )
         }
     };
 
@@ -272,6 +309,7 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
                     display_time: update.timestamp.clone(), // Use wall-clock timestamp for display
                     confidence: update.confidence,
                     sequence_id: update.sequence_id,
+                    speaker: update.speaker.clone(),
                 };
 
                 // Save to recording manager
@@ -337,11 +375,12 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
 
         // Emit error event for frontend - actionable: false to show toast instead of modal
         // (download progress is already shown in top-right toast)
-        let _ = app.emit("transcription-error", serde_json::json!({
-            "error": validation_error,
-            "userMessage": "Recording cannot start: Transcription model is still downloading. Please wait for the download to complete.",
-            "actionable": false
-        }));
+        transcription::TranscriptionErrorEvent::new(
+            validation_error.clone(),
+            "Recording cannot start: Transcription model is still downloading. Please wait for the download to complete.",
+            false,
+        )
+        .emit(&app);
 
         return Err(validation_error);
     }
@@ -440,6 +479,7 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
                     display_time: update.timestamp.clone(), // Use wall-clock timestamp for display
                     confidence: update.confidence,
                     sequence_id: update.sequence_id,
+                    speaker: update.speaker.clone(),
                 };
 
                 // Save to recording manager
@@ -1022,6 +1062,39 @@ pub async fn get_meeting_folder_path() -> Result<Option<String>, String> {
     } else {
         Ok(None)
     }
+}
+
+/// Load transcript segments from a meeting folder's transcripts.json (recovery fallback)
+#[tauri::command]
+pub async fn load_transcripts_from_folder(
+    meeting_folder: String,
+) -> Result<Vec<crate::audio::recording_saver::TranscriptSegment>, String> {
+    use std::path::PathBuf;
+
+    let transcript_path = PathBuf::from(&meeting_folder).join("transcripts.json");
+    if !transcript_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let content = std::fs::read_to_string(&transcript_path)
+        .map_err(|e| format!("Failed to read transcripts.json: {}", e))?;
+
+    #[derive(serde::Deserialize)]
+    struct TranscriptFile {
+        segments: Vec<crate::audio::recording_saver::TranscriptSegment>,
+    }
+
+    if let Ok(file) = serde_json::from_str::<TranscriptFile>(&content) {
+        info!(
+            "Loaded {} transcript segments from {}",
+            file.segments.len(),
+            transcript_path.display()
+        );
+        return Ok(file.segments);
+    }
+
+    serde_json::from_str::<Vec<crate::audio::recording_saver::TranscriptSegment>>(&content)
+        .map_err(|e| format!("Failed to parse transcripts.json: {}", e))
 }
 
 /// Get accumulated transcript segments from current recording session

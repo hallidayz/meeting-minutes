@@ -195,6 +195,7 @@ pub async fn import_ai_notes_bundle(
                     task.priority.as_deref().unwrap_or("medium"),
                     task.status.as_deref().unwrap_or("todo"),
                     None,
+                    None,
                 )
                 .await
                 .map_err(|e| e.to_string())?;

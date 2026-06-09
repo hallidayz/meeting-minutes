@@ -9,6 +9,7 @@ import { listen } from '@tauri-apps/api/event';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import Analytics from '@/lib/analytics';
+import { parseTranscriptionErrorPayload, shouldReportTranscriptionError } from '@/lib/transcriptionErrors';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
 
 interface RecordingControlsProps {
@@ -273,38 +274,30 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
 
         // Transcription error listener - handles structured error objects with actionable flag
         const transcriptionErrorUnsubscribe = await listen('transcription-error', (event) => {
-          console.log('transcription-error event received:', event);
-          console.error('Transcription error received:', event.payload);
-
-          let errorMessage: string;
-          let isActionable = false;
-
-          if (typeof event.payload === 'object' && event.payload !== null) {
-            const payload = event.payload as { error: string, userMessage: string, actionable: boolean };
-            errorMessage = payload.userMessage || payload.error;
-            isActionable = payload.actionable || false;
-          } else {
-            errorMessage = String(event.payload);
+          const parsed = parseTranscriptionErrorPayload(event.payload);
+          if (!parsed) {
+            console.warn(
+              '[RecordingControls] Ignoring malformed transcription-error payload:',
+              JSON.stringify(event.payload)
+            );
+            return;
           }
 
-          Analytics.trackTranscriptionError(errorMessage);
-          console.log('Tracked transcription error:', errorMessage);
+          if (!shouldReportTranscriptionError(parsed.error)) {
+            return;
+          }
 
-          setTranscriptionErrors(prev => {
-            const newCount = prev + 1;
-            console.log('Transcription error count incremented:', newCount);
-            return newCount;
-          });
-          setIsProcessing(false);
-          console.log('Calling onRecordingStop(false) due to transcription error');
-          onRecordingStop(false);
+          console.warn('[RecordingControls] Transcription error:', parsed);
+          Analytics.trackTranscriptionError(parsed.userMessage);
 
-          // For actionable errors (like model loading failures), the main page will handle showing the model selector
-          // For regular errors, they are handled by useModalState global listener which shows a toast
-          // We don't want to show a modal (via onTranscriptionError) AND a toast, so we skip the callback here
-          /* if (onTranscriptionError && !isActionable) {
-            onTranscriptionError(errorMessage);
-          } */
+          setTranscriptionErrors((prev) => prev + 1);
+
+          // Only stop an active recording for fatal/actionable failures (e.g. engine init)
+          if (parsed.actionable) {
+            setIsProcessing(false);
+            onRecordingStop(false);
+            onTranscriptionError?.(parsed.userMessage);
+          }
         });
 
         // Pause/Resume events are now handled by RecordingStateContext

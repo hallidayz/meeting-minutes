@@ -1,4 +1,4 @@
-use crate::summary::templates;
+use crate::summary::templates::{self, Template, TemplateSection};
 use serde::{Deserialize, Serialize};
 use tauri::Runtime;
 use tracing::{info, warn};
@@ -14,6 +14,24 @@ pub struct TemplateInfo {
 
     /// Brief description of the template's purpose
     pub description: String,
+
+    /// Stored in the user's custom templates directory
+    pub is_custom: bool,
+
+    /// Can be edited/deleted in settings (custom templates only)
+    pub is_editable: bool,
+}
+
+/// Full template payload for artifact-style editor
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TemplateFull {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub sections: Vec<TemplateSection>,
+    pub is_editable: bool,
+    /// Markdown preview of the structure the LLM will follow
+    pub preview_markdown: String,
 }
 
 /// Detailed template structure for preview/debugging
@@ -49,10 +67,15 @@ pub async fn api_list_templates<R: Runtime>(
 
     let template_infos: Vec<TemplateInfo> = templates
         .into_iter()
-        .map(|(id, name, description)| TemplateInfo {
-            id,
-            name,
-            description,
+        .map(|(id, name, description, is_custom)| {
+            let is_editable = templates::is_editable_template(&id);
+            TemplateInfo {
+                id,
+                name,
+                description,
+                is_custom,
+                is_editable,
+            }
         })
         .collect();
 
@@ -121,6 +144,82 @@ pub async fn api_validate_template<R: Runtime>(
             Err(e)
         }
     }
+}
+
+/// Get full template for artifact editor (all sections + preview)
+#[tauri::command]
+pub async fn api_get_template<R: Runtime>(
+    _app: tauri::AppHandle<R>,
+    template_id: String,
+) -> Result<TemplateFull, String> {
+    info!("api_get_template called for template_id: {}", template_id);
+
+    let template = templates::get_template(&template_id)?;
+    let is_editable = templates::is_editable_template(&template_id);
+    let preview_markdown = template.to_markdown_structure();
+
+    Ok(TemplateFull {
+        id: template_id,
+        name: template.name,
+        description: template.description,
+        sections: template.sections,
+        is_editable,
+        preview_markdown,
+    })
+}
+
+/// Create or update a custom template
+#[tauri::command]
+pub async fn api_save_template<R: Runtime>(
+    _app: tauri::AppHandle<R>,
+    template_id: String,
+    template: Template,
+) -> Result<TemplateInfo, String> {
+    info!("api_save_template called for template_id: {}", template_id);
+
+    templates::save_custom_template(&template_id, &template)?;
+
+    Ok(TemplateInfo {
+        id: template_id,
+        name: template.name,
+        description: template.description,
+        is_custom: true,
+        is_editable: true,
+    })
+}
+
+/// Delete a custom template
+#[tauri::command]
+pub async fn api_delete_template<R: Runtime>(
+    _app: tauri::AppHandle<R>,
+    template_id: String,
+) -> Result<(), String> {
+    info!("api_delete_template called for template_id: {}", template_id);
+    templates::delete_custom_template(&template_id)
+}
+
+/// Duplicate any template into a new custom template
+#[tauri::command]
+pub async fn api_duplicate_template<R: Runtime>(
+    _app: tauri::AppHandle<R>,
+    source_id: String,
+    new_id: String,
+) -> Result<TemplateInfo, String> {
+    info!(
+        "api_duplicate_template called: {} -> {}",
+        source_id, new_id
+    );
+
+    templates::duplicate_template(&source_id, &new_id)?;
+    let template = templates::get_template(&new_id)?;
+
+    Ok(TemplateInfo {
+        id: new_id,
+        name: template.name,
+        description: template.description,
+        is_custom: true,
+        is_editable: true,
+    })
 }
 
 #[cfg(test)]

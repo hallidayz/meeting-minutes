@@ -5,6 +5,7 @@
 use super::engine::TranscriptionEngine;
 use super::provider::TranscriptionError;
 use crate::audio::AudioChunk;
+use crate::audio::recording_state::DeviceType;
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -36,6 +37,8 @@ pub struct TranscriptUpdate {
     pub audio_start_time: f64, // Seconds from recording start (e.g., 125.3)
     pub audio_end_time: f64,   // Seconds from recording start (e.g., 128.6)
     pub duration: f64,          // Segment duration in seconds (e.g., 3.3)
+    /// Speaker label: "You" (mic) or "Remote" (system audio) when channel-separated
+    pub speaker: Option<String>,
 }
 
 // NOTE: get_transcript_history and get_recording_meeting_name functions
@@ -54,11 +57,12 @@ pub fn start_transcription_task<R: Runtime>(
             Ok(engine) => engine,
             Err(e) => {
                 error!("Failed to initialize transcription engine: {}", e);
-                let _ = app.emit("transcription-error", serde_json::json!({
-                    "error": e,
-                    "userMessage": "Recording failed: Unable to initialize speech recognition. Please check your model settings.",
-                    "actionable": true
-                }));
+                super::TranscriptionErrorEvent::new(
+                    e,
+                    "Recording failed: Unable to initialize speech recognition. Please check your model settings.",
+                    true,
+                )
+                .emit(&app);
                 return;
             }
         };
@@ -142,6 +146,7 @@ pub fn start_transcription_task<R: Runtime>(
 
                             let chunk_timestamp = chunk.timestamp;
                             let chunk_duration = chunk.data.len() as f64 / chunk.sample_rate as f64;
+                            let device_type = chunk.device_type.clone();
 
                             // Transcribe with provider-agnostic approach
                             match transcribe_chunk_with_provider(
@@ -205,10 +210,21 @@ pub fn start_transcription_task<R: Runtime>(
 
                                         // Emit transcript update with NEW recording-relative timestamps
 
+                                        let (speaker, source) = match device_type {
+                                            DeviceType::Microphone => (
+                                                Some("You".to_string()),
+                                                "Microphone".to_string(),
+                                            ),
+                                            DeviceType::System => (
+                                                Some("Remote".to_string()),
+                                                "System Audio".to_string(),
+                                            ),
+                                        };
+
                                         let update = TranscriptUpdate {
                                             text: transcript,
                                             timestamp: format_current_timestamp(), // Wall-clock for reference
-                                            source: "Audio".to_string(),
+                                            source,
                                             sequence_id,
                                             chunk_start_time: chunk_timestamp, // Legacy compatibility
                                             is_partial,
@@ -217,6 +233,7 @@ pub fn start_transcription_task<R: Runtime>(
                                             audio_start_time,
                                             audio_end_time,
                                             duration: chunk_duration,
+                                            speaker,
                                         };
 
                                         if let Err(e) = app_clone.emit("transcript-update", &update)
@@ -471,17 +488,7 @@ async fn transcribe_chunk_with_provider<R: Runtime>(
                         chunk.chunk_id, e
                     );
 
-                    let transcription_error = TranscriptionError::EngineFailed(e.to_string());
-                    let _ = app.emit(
-                        "transcription-error",
-                        &serde_json::json!({
-                            "error": transcription_error.to_string(),
-                            "userMessage": format!("Transcription failed: {}", transcription_error),
-                            "actionable": false
-                        }),
-                    );
-
-                    Err(transcription_error)
+                    Err(TranscriptionError::EngineFailed(e.to_string()))
                 }
             }
         }
@@ -507,17 +514,7 @@ async fn transcribe_chunk_with_provider<R: Runtime>(
                         chunk.chunk_id, e
                     );
 
-                    let transcription_error = TranscriptionError::EngineFailed(e.to_string());
-                    let _ = app.emit(
-                        "transcription-error",
-                        &serde_json::json!({
-                            "error": transcription_error.to_string(),
-                            "userMessage": format!("Transcription failed: {}", transcription_error),
-                            "actionable": false
-                        }),
-                    );
-
-                    Err(transcription_error)
+                    Err(TranscriptionError::EngineFailed(e.to_string()))
                 }
             }
         }
@@ -554,15 +551,6 @@ async fn transcribe_chunk_with_provider<R: Runtime>(
                         provider.provider_name(),
                         chunk.chunk_id,
                         e
-                    );
-
-                    let _ = app.emit(
-                        "transcription-error",
-                        &serde_json::json!({
-                            "error": e.to_string(),
-                            "userMessage": format!("Transcription failed: {}", e),
-                            "actionable": false
-                        }),
                     );
 
                     Err(e)

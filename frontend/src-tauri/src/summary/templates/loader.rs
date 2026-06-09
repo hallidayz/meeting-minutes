@@ -199,14 +199,19 @@ pub fn list_template_ids() -> Vec<String> {
 
 /// List all available templates with their metadata
 ///
-/// Returns a list of (id, name, description) tuples
-pub fn list_templates() -> Vec<(String, String, String)> {
+/// Returns a list of (id, name, description, is_custom) tuples
+pub fn list_templates() -> Vec<(String, String, String, bool)> {
     let mut templates = Vec::new();
 
     for id in list_template_ids() {
         match get_template(&id) {
             Ok(template) => {
-                templates.push((id, template.name, template.description));
+                templates.push((
+                    id.clone(),
+                    template.name,
+                    template.description,
+                    is_custom_template(&id),
+                ));
             }
             Err(e) => {
                 warn!("Failed to load template '{}': {}", id, e);
@@ -215,6 +220,84 @@ pub fn list_templates() -> Vec<(String, String, String)> {
     }
 
     templates
+}
+
+/// Whether a template exists in the user's custom templates directory
+pub fn is_custom_template(template_id: &str) -> bool {
+    load_custom_template(template_id).is_some()
+}
+
+/// Whether a template can be edited or deleted (custom only)
+pub fn is_editable_template(template_id: &str) -> bool {
+    is_custom_template(template_id)
+}
+
+fn ensure_custom_templates_dir() -> Result<PathBuf, String> {
+    let dir = get_custom_templates_dir()
+        .ok_or_else(|| "Could not resolve custom templates directory".to_string())?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("Failed to create templates directory: {}", e))?;
+    Ok(dir)
+}
+
+fn validate_template_id(template_id: &str) -> Result<(), String> {
+    if template_id.is_empty() {
+        return Err("Template id cannot be empty".to_string());
+    }
+    if !template_id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err(
+            "Template id may only contain letters, numbers, underscores, and hyphens".to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// Save (create or update) a custom template
+pub fn save_custom_template(template_id: &str, template: &Template) -> Result<(), String> {
+    validate_template_id(template_id)?;
+    template.validate()?;
+
+    let dir = ensure_custom_templates_dir()?;
+    let path = dir.join(format!("{}.json", template_id));
+    let json = serde_json::to_string_pretty(template)
+        .map_err(|e| format!("Failed to serialize template: {}", e))?;
+
+    std::fs::write(&path, json).map_err(|e| format!("Failed to write template file: {}", e))?;
+    info!("Saved custom template '{}' to {:?}", template_id, path);
+    Ok(())
+}
+
+/// Delete a custom template (built-in/bundled templates cannot be deleted)
+pub fn delete_custom_template(template_id: &str) -> Result<(), String> {
+    if !is_custom_template(template_id) {
+        return Err(format!(
+            "Template '{}' is built-in or bundled and cannot be deleted. Duplicate it to customize.",
+            template_id
+        ));
+    }
+
+    let dir = get_custom_templates_dir()
+        .ok_or_else(|| "Could not resolve custom templates directory".to_string())?;
+    let path = dir.join(format!("{}.json", template_id));
+
+    std::fs::remove_file(&path).map_err(|e| format!("Failed to delete template: {}", e))?;
+    info!("Deleted custom template '{}'", template_id);
+    Ok(())
+}
+
+/// Copy any template into the custom directory under a new id
+pub fn duplicate_template(source_id: &str, new_id: &str) -> Result<(), String> {
+    validate_template_id(new_id)?;
+    if is_custom_template(new_id) || load_custom_template(new_id).is_some() {
+        return Err(format!("Template id '{}' already exists", new_id));
+    }
+
+    let mut template = get_template(source_id)?;
+    template.name = format!("{} (Copy)", template.name);
+    save_custom_template(new_id, &template)
 }
 
 #[cfg(test)]

@@ -6,6 +6,7 @@ pub mod provider;
 pub mod whisper_provider;
 pub mod parakeet_provider;
 pub mod engine;
+pub mod events;
 pub mod worker;
 
 // Re-export commonly used types
@@ -18,6 +19,7 @@ pub use engine::{
     get_or_init_transcription_engine,
     get_or_init_whisper
 };
+pub use events::TranscriptionErrorEvent;
 pub use worker::{
     start_transcription_task,
     reset_speech_detected_flag,

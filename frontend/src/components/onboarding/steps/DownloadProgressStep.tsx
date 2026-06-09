@@ -8,7 +8,7 @@ import { useOnboarding } from '@/contexts/OnboardingContext';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const DEFAULT_WHISPER_MODEL = 'large-v3-turbo-q5_0';
+const DEFAULT_WHISPER_MODEL = 'large-v3-turbo';
 
 type DownloadStatus = 'waiting' | 'downloading' | 'completed' | 'error';
 

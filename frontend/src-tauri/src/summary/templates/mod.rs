@@ -43,8 +43,9 @@ mod types;
 
 // Re-export public API
 pub use loader::{
-    get_template, list_template_ids, list_templates, set_bundled_templates_dir,
-    validate_and_parse_template,
+    delete_custom_template, duplicate_template, get_template, is_custom_template,
+    is_editable_template, list_template_ids, list_templates, save_custom_template,
+    set_bundled_templates_dir, validate_and_parse_template,
 };
 pub use types::{Template, TemplateSection};
 
@@ -74,7 +75,7 @@ mod tests {
         let templates = list_templates();
         assert!(!templates.is_empty());
 
-        for (id, name, description) in templates {
+        for (id, name, description, _is_custom) in templates {
             assert!(!id.is_empty());
             assert!(!name.is_empty());
             assert!(!description.is_empty());

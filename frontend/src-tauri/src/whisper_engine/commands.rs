@@ -190,6 +190,15 @@ pub async fn whisper_has_available_models() -> Result<bool, String> {
     }
 }
 
+/// Initialize Whisper and load the configured model (or best available fallback).
+#[command]
+pub async fn whisper_prepare_for_recording<R: Runtime>(
+    app: AppHandle<R>,
+) -> Result<String, String> {
+    whisper_init().await?;
+    whisper_validate_model_ready_with_config(&app).await
+}
+
 #[command]
 pub async fn whisper_validate_model_ready() -> Result<String, String> {
     let engine = {

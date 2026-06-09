@@ -93,7 +93,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   // Transcript model configuration state
   const [transcriptModelConfig, setTranscriptModelConfig] = useState<TranscriptModelProps>({
     provider: 'localWhisper',
-    model: 'large-v3-turbo-q5_0',
+    model: 'large-v3-turbo',
     apiKey: null
   });
 
@@ -108,7 +108,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   });
 
   // Language preference state
-  const [selectedLanguage, setSelectedLanguage] = useState('auto-translate');
+  const [selectedLanguage, setSelectedLanguage] = useState('auto');
 
   // UI preferences state
   const [showConfidenceIndicator, setShowConfidenceIndicator] = useState<boolean>(() => {
@@ -148,15 +148,19 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // Load Ollama models on mount
+  // Load Ollama models on mount (fast-fail when Ollama is not running)
   useEffect(() => {
     const loadModels = async () => {
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 2500);
+
       try {
         const response = await fetch('http://localhost:11434/api/tags', {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
           },
+          signal: controller.signal,
         });
 
         if (!response.ok) {
@@ -172,8 +176,14 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
         }));
         setModels(modelList);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load Ollama models');
-        console.error('Error loading models:', err);
+        if (err instanceof Error && err.name === 'AbortError') {
+          console.warn('[ConfigContext] Ollama model list timed out (Ollama may be offline)');
+        } else {
+          setError(err instanceof Error ? err.message : 'Failed to load Ollama models');
+          console.error('Error loading models:', err);
+        }
+      } finally {
+        window.clearTimeout(timeoutId);
       }
     };
 
@@ -200,9 +210,14 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
         if (disposed) return;
         if (config) {
           console.log('[ConfigContext] Loaded saved transcript config:', config);
+          const rawProvider = config.provider as string;
+          const provider =
+            rawProvider === 'fastWhisper' || rawProvider === 'parakeet'
+              ? 'localWhisper'
+              : config.provider || 'localWhisper';
           setTranscriptModelConfig({
-            provider: config.provider || 'localWhisper',
-            model: config.model || 'large-v3-turbo-q5_0',
+            provider,
+            model: config.model || 'large-v3-turbo',
             apiKey: config.apiKey || null
           });
         }
@@ -327,14 +342,16 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     const loadLanguagePreference = async () => {
       try {
         const language = await configService.getLanguagePreference();
-        if (language) {
-          setSelectedLanguage(language);
-          console.log('Loaded language preference:', language);
+        const resolved =
+          language === 'auto-translate' ? 'auto' : language || 'auto';
+        setSelectedLanguage(resolved);
+        if (resolved !== language) {
+          await configService.setLanguagePreference('auto');
         }
+        console.log('Loaded language preference:', resolved);
       } catch (error) {
-        console.log('No language preference found or failed to load, using default (auto-translate):', error);
-        // Default to 'auto-translate' (Auto Detect with English translation) if no preference is saved
-        setSelectedLanguage('auto-translate');
+        console.log('No language preference found or failed to load, using default (auto):', error);
+        setSelectedLanguage('auto');
       }
     };
     loadLanguagePreference();

@@ -101,6 +101,12 @@ pub struct ModelInfo {
 
     /// GGUF filename on disk
     pub gguf_file: String,
+
+    /// Where the GGUF file is downloaded from
+    pub download_url: String,
+
+    /// Minimum recommended RAM in GB
+    pub min_ram_gb: u32,
 }
 
 // ============================================================================
@@ -278,6 +284,8 @@ impl ModelManager {
                 context_size: model_def.context_size,
                 description: model_def.description.clone(),
                 gguf_file: model_def.gguf_file.clone(),
+                download_url: model_def.download_url.clone(),
+                min_ram_gb: model_def.min_ram_gb,
             };
 
             models_map.insert(model_def.name.clone(), model_info);

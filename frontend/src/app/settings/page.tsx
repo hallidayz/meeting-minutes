@@ -1,60 +1,50 @@
 'use client';
 
-import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
-import { ArrowLeft, Settings2, Mic, Database as DatabaseIcon, SparkleIcon } from 'lucide-react';
+import React, { useState, useLayoutEffect, useRef, Suspense, lazy } from 'react';
+import { ArrowLeft, Settings2, Mic, Database as DatabaseIcon, SparkleIcon, FileText } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { invoke } from '@tauri-apps/api/core';
 import { motion } from 'framer-motion';
-import { TranscriptSettings, TranscriptModelProps } from '@/components/TranscriptSettings';
-import { RecordingSettings } from '@/components/RecordingSettings';
-import { PreferenceSettings } from '@/components/PreferenceSettings';
-import { SummaryModelSettings } from '@/components/SummaryModelSettings';
-import { useConfig } from '@/contexts/ConfigContext';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { IndustrySettings } from '@/components/IndustrySettings';
 import { ImportAiNotes } from '@/components/ImportAiNotes';
-import { BRAND } from '@/config/branding';
+import { PreferenceSettings } from '@/components/PreferenceSettings';
+import { useConfig } from '@/contexts/ConfigContext';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { SettingsTabSkeleton } from '@/components/Settings/SettingsTabSkeleton';
+
+const RecordingSettings = lazy(() =>
+  import('@/components/RecordingSettings').then((m) => ({ default: m.RecordingSettings }))
+);
+const TranscriptSettings = lazy(() =>
+  import('@/components/TranscriptSettings').then((m) => ({ default: m.TranscriptSettings }))
+);
+const SummaryModelSettings = lazy(() =>
+  import('@/components/SummaryModelSettings').then((m) => ({ default: m.SummaryModelSettings }))
+);
+const TemplateArtifactSettings = lazy(() =>
+  import('@/components/Settings/TemplateArtifactSettings').then((m) => ({
+    default: m.TemplateArtifactSettings,
+  }))
+);
 
 // Tabs configuration (constant)
 const TABS = [
   { value: 'general', label: 'General', icon: Settings2 },
   { value: 'recording', label: 'Recordings', icon: Mic },
   { value: 'Transcriptionmodels', label: 'Transcription', icon: DatabaseIcon },
-  { value: 'summaryModels', label: 'Summary', icon: SparkleIcon }
+  { value: 'summaryModels', label: 'Summary', icon: SparkleIcon },
+  { value: 'templates', label: 'Templates', icon: FileText },
 ] as const;
 
 export default function SettingsPage() {
   const router = useRouter();
   const { transcriptModelConfig, setTranscriptModelConfig } = useConfig();
 
-  // Animation state for tabs
   const [activeTab, setActiveTab] = useState('general');
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const [underlineStyle, setUnderlineStyle] = useState({ left: 0, width: 0 });
 
-  // Load saved transcript configuration on mount
-  useEffect(() => {
-    const loadTranscriptConfig = async () => {
-      try {
-        const config = await invoke('api_get_transcript_config') as any;
-        if (config) {
-          console.log('Loaded saved transcript config:', config);
-          setTranscriptModelConfig({
-            provider: config.provider || 'localWhisper',
-            model: config.model || 'large-v3',
-            apiKey: config.apiKey || null
-          });
-        }
-      } catch (error) {
-        console.error('Failed to load transcript config:', error);
-      }
-    };
-    loadTranscriptConfig();
-  }, [setTranscriptModelConfig]);
-
-  // Update underline position when active tab changes
   useLayoutEffect(() => {
-    const activeIndex = TABS.findIndex(tab => tab.value === activeTab);
+    const activeIndex = TABS.findIndex((tab) => tab.value === activeTab);
     const activeTabElement = tabRefs.current[activeIndex];
 
     if (activeTabElement) {
@@ -65,7 +55,6 @@ export default function SettingsPage() {
 
   return (
     <div className="h-screen bg-gray-50 flex flex-col">
-      {/* Fixed Header */}
       <div className="sticky top-0 z-10 bg-gray-50 border-b border-gray-200">
         <div className="max-w-6xl mx-auto px-8 py-6">
           <div className="flex items-center gap-4">
@@ -81,10 +70,8 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Scrollable Content */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-6xl mx-auto p-8 pt-6">
-          {/* Tabs */}
           <Tabs value={activeTab} onValueChange={setActiveTab}>
             <TabsList className="bg-transparent relative rounded-none border-b border-gray-200 p-0 h-auto">
               {TABS.map((tab, index) => {
@@ -93,7 +80,9 @@ export default function SettingsPage() {
                   <TabsTrigger
                     key={tab.value}
                     value={tab.value}
-                    ref={el => { tabRefs.current[index] = el }}
+                    ref={(el) => {
+                      tabRefs.current[index] = el;
+                    }}
                     className="flex items-center gap-2 px-6 py-4 bg-transparent rounded-none border-0 data-[state=active]:bg-transparent data-[state=active]:text-blue-600 data-[state=active]:shadow-none text-gray-600 hover:text-gray-900 relative z-10"
                   >
                     <Icon className="w-4 h-4" />
@@ -115,21 +104,36 @@ export default function SettingsPage() {
               <ImportAiNotes />
               <PreferenceSettings />
             </TabsContent>
+
             <TabsContent value="recording">
-              <RecordingSettings />
+              <Suspense fallback={<SettingsTabSkeleton />}>
+                <RecordingSettings />
+              </Suspense>
             </TabsContent>
+
             <TabsContent value="Transcriptionmodels">
-              <TranscriptSettings
-                transcriptModelConfig={transcriptModelConfig}
-                setTranscriptModelConfig={setTranscriptModelConfig}
-              />
+              <Suspense fallback={<SettingsTabSkeleton />}>
+                <TranscriptSettings
+                  transcriptModelConfig={transcriptModelConfig}
+                  setTranscriptModelConfig={setTranscriptModelConfig}
+                />
+              </Suspense>
             </TabsContent>
+
             <TabsContent value="summaryModels">
-              <SummaryModelSettings />
+              <Suspense fallback={<SettingsTabSkeleton />}>
+                <SummaryModelSettings />
+              </Suspense>
+            </TabsContent>
+
+            <TabsContent value="templates">
+              <Suspense fallback={<SettingsTabSkeleton />}>
+                <TemplateArtifactSettings />
+              </Suspense>
             </TabsContent>
           </Tabs>
         </div>
       </div>
     </div>
   );
-};
+}

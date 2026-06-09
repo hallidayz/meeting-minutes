@@ -9,6 +9,61 @@ import { useState, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { indexedDBService, MeetingMetadata, StoredTranscript } from '@/services/indexedDBService';
 import { storageService } from '@/services/storageService';
+import { Transcript } from '@/types';
+
+interface DiskTranscriptSegment {
+  id: string;
+  text: string;
+  audio_start_time: number;
+  audio_end_time: number;
+  duration: number;
+  display_time: string;
+  confidence: number;
+  sequence_id: number;
+  speaker?: string;
+}
+
+function formatTranscriptsForSave(
+  transcripts: StoredTranscript[],
+  source: 'indexeddb' | 'disk'
+): Transcript[] {
+  return transcripts.map((t, index) => ({
+    id: t.id?.toString() || `${Date.now()}-${index}`,
+    text: t.text,
+    timestamp:
+      source === 'disk'
+        ? (t as StoredTranscript & { display_time?: string }).display_time || t.timestamp
+        : t.timestamp,
+    sequence_id: t.sequenceId ?? (t as { sequence_id?: number }).sequence_id ?? index,
+    chunk_start_time: (t as { chunk_start_time?: number }).chunk_start_time,
+    is_partial: (t as { is_partial?: boolean }).is_partial || false,
+    confidence: t.confidence,
+    audio_start_time: t.audio_start_time,
+    audio_end_time: t.audio_end_time,
+    duration: t.duration,
+    speaker: (t as { speaker?: string }).speaker,
+  }));
+}
+
+async function loadDiskTranscripts(folderPath: string): Promise<StoredTranscript[]> {
+  const segments = await invoke<DiskTranscriptSegment[]>('load_transcripts_from_folder', {
+    meetingFolder: folderPath,
+  });
+
+  return segments.map((segment) => ({
+    text: segment.text,
+    timestamp: segment.display_time,
+    confidence: segment.confidence,
+    sequenceId: segment.sequence_id,
+    audio_start_time: segment.audio_start_time,
+    audio_end_time: segment.audio_end_time,
+    duration: segment.duration,
+    speaker: segment.speaker,
+    display_time: segment.display_time,
+    meetingId: '',
+    storedAt: Date.now(),
+  }));
+}
 
 interface AudioRecoveryStatus {
   status: string; // "success" | "partial" | "failed" | "none"
@@ -53,32 +108,49 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
         return isWithinRetention && isOldEnough;
       });
 
-      // Verify audio checkpoint availability for each meeting
-      const meetingsWithAudioStatus = await Promise.all(
+      // Verify recoverable content: IndexedDB transcripts, on-disk transcripts.json, or audio
+      const meetingsWithStatus = await Promise.all(
         recentMeetings.map(async (meeting) => {
-          if (meeting.folderPath) {
-            try {
-              const hasAudio = await invoke<boolean>('has_audio_checkpoints', {
-                meetingFolder: meeting.folderPath
-              });
+          let transcriptCount = await indexedDBService.getTranscriptCount(meeting.meetingId);
+          let folderPath = meeting.folderPath;
 
-              // If no audio files, clear folderPath to show "No audio" in UI
-              return {
-                ...meeting,
-                folderPath: hasAudio ? meeting.folderPath : undefined
-              };
+          if (transcriptCount === 0 && folderPath) {
+            try {
+              const diskTranscripts = await loadDiskTranscripts(folderPath);
+              transcriptCount = diskTranscripts.length;
             } catch (error) {
-              console.warn('Failed to check audio for meeting:', error);
-              // On error, assume no audio to be safe
-              return { ...meeting, folderPath: undefined };
+              console.warn('Failed to load on-disk transcripts for meeting:', error);
             }
           }
-          return meeting;
+
+          if (folderPath) {
+            try {
+              const hasAudio = await invoke<boolean>('has_audio_checkpoints', {
+                meetingFolder: folderPath,
+              });
+              if (!hasAudio) {
+                folderPath = undefined;
+              }
+            } catch (error) {
+              console.warn('Failed to check audio for meeting:', error);
+              folderPath = undefined;
+            }
+          }
+
+          return {
+            ...meeting,
+            folderPath,
+            transcriptCount,
+          };
         })
       );
 
+      // Only show meetings that have transcripts or recoverable audio
+      const recoverable = meetingsWithStatus.filter(
+        (m) => m.transcriptCount > 0 || !!m.folderPath
+      );
 
-      setRecoverableMeetings(meetingsWithAudioStatus);
+      setRecoverableMeetings(recoverable);
     } catch (error) {
       console.error('Failed to check for recoverable transcripts:', error);
       setRecoverableMeetings([]);
@@ -92,8 +164,15 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
    */
   const loadMeetingTranscripts = useCallback(async (meetingId: string): Promise<StoredTranscript[]> => {
     try {
-      const transcripts = await indexedDBService.getTranscripts(meetingId);
-      // Sort by sequence ID
+      let transcripts = await indexedDBService.getTranscripts(meetingId);
+
+      if (transcripts.length === 0) {
+        const metadata = await indexedDBService.getMeetingMetadata(meetingId);
+        if (metadata?.folderPath) {
+          transcripts = await loadDiskTranscripts(metadata.folderPath);
+        }
+      }
+
       transcripts.sort((a, b) => (a.sequenceId || 0) - (b.sequenceId || 0));
       return transcripts;
     } catch (error) {
@@ -114,10 +193,13 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
         throw new Error('Meeting metadata not found');
       }
 
-      // 2. Load all transcripts
-      const transcripts = await loadMeetingTranscripts(meetingId);
-      if (transcripts.length === 0) {
-        throw new Error('No transcripts found for this meeting');
+      // 2. Load transcripts from IndexedDB, then fall back to on-disk transcripts.json
+      let transcripts = await loadMeetingTranscripts(meetingId);
+      let transcriptSource: 'indexeddb' | 'disk' = 'indexeddb';
+
+      if (transcripts.length === 0 && metadata.folderPath) {
+        transcripts = await loadDiskTranscripts(metadata.folderPath);
+        transcriptSource = 'disk';
       }
 
       // 3. Check for folder path
@@ -159,19 +241,24 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
         };
       }
 
-      // 5. Convert StoredTranscripts to the format expected by storageService
-      const formattedTranscripts = transcripts.map((t, index) => ({
-        id: t.id?.toString() || `${Date.now()}-${index}`,
-        text: t.text,
-        timestamp: t.timestamp,
-        sequence_id: t.sequenceId || index,
-        chunk_start_time: (t as any).chunk_start_time,
-        is_partial: (t as any).is_partial || false,
-        confidence: t.confidence,
-        audio_start_time: (t as any).audio_start_time,
-        audio_end_time: (t as any).audio_end_time,
-        duration: (t as any).duration,
-      }));
+      if (transcripts.length === 0) {
+        const hasRecoverableAudio =
+          audioRecoveryStatus?.status === 'success' ||
+          audioRecoveryStatus?.status === 'partial' ||
+          (folderPath &&
+            (await invoke<boolean>('has_audio_checkpoints', { meetingFolder: folderPath }).catch(
+              () => false
+            )));
+
+        if (!hasRecoverableAudio) {
+          throw new Error(
+            'No transcripts found for this meeting. The recording may have been too short or transcription did not run.'
+          );
+        }
+      }
+
+      // 5. Convert transcripts to the format expected by storageService
+      const formattedTranscripts = formatTranscriptsForSave(transcripts, transcriptSource);
 
       // 6. Save to backend database using existing save utilities
       const saveResponse = await storageService.saveMeeting(

@@ -6,7 +6,7 @@
     "build": {
         "frontendDist": "../out",
         "devUrl": "http://localhost:3118",
-        "beforeDevCommand": "pnpm dev",
+        "beforeDevCommand": "node scripts/start-dev-server.mjs",
         "beforeBuildCommand": "pnpm build"
     },
     "app": {
@@ -63,6 +63,7 @@
                         "store:default",
                         "notification:default",
                         "notification:allow-is-permission-granted",
+                        "dialog:default",
                         "updater:default",
                         "process:default",
                         {

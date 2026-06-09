@@ -32,7 +32,7 @@ impl AudioMixerRingBuffer {
         // System audio (especially Core Audio on macOS) can have significant jitter
         // due to sample-by-sample streaming → batching → channel transmission
         // Accounts for: RNNoise buffering + Core Audio jitter + processing delays
-        let max_buffer_size = window_size_samples * 8;  // 400ms (was 200ms)
+        let max_buffer_size = window_size_samples * 12;
 
         info!("🔊 Ring buffer initialized: window={}ms ({} samples), max={}ms ({} samples)",
               window_ms, window_size_samples,
@@ -677,11 +677,15 @@ impl AudioCapture {
 
 /// VAD-driven audio processing pipeline
 /// Uses Voice Activity Detection to segment speech in real-time and send only speech to Whisper
+/// Minimum speech segment length sent to Whisper (25ms @ 16kHz)
+const MIN_VAD_SAMPLES: usize = 400;
+
 pub struct AudioPipeline {
     receiver: mpsc::UnboundedReceiver<AudioChunk>,
     transcription_sender: mpsc::UnboundedSender<AudioChunk>,
     state: Arc<RecordingState>,
-    vad_processor: ContinuousVadProcessor,
+    mic_vad_processor: ContinuousVadProcessor,
+    sys_vad_processor: ContinuousVadProcessor,
     sample_rate: u32,
     chunk_id_counter: u64,
     // Performance optimization: reduce logging frequency
@@ -724,18 +728,24 @@ impl AudioPipeline {
         // This bridges natural pauses without excessive fragmentation
         // For mac os core audio, 900ms, for windows 400ms seems good
 
-        let redemption_time = if cfg!(target_os = "macos") { 400 } else { 400 };
+        // Longer redemption bridges natural pauses so utterances aren't fragmented
+        let redemption_time = if cfg!(target_os = "macos") { 1500 } else { 1200 };
 
-        let vad_processor = match ContinuousVadProcessor::new(sample_rate, redemption_time) {
-            Ok(processor) => {
-                info!("VAD-driven pipeline: VAD segments will be sent directly to Whisper (no time-based accumulation)");
-                processor
-            }
-            Err(e) => {
-                error!("Failed to create VAD processor: {}", e);
-                panic!("VAD processor creation failed: {}", e);
-            }
-        };
+        let mic_vad_processor = ContinuousVadProcessor::new(sample_rate, redemption_time)
+            .unwrap_or_else(|e| {
+                error!("Failed to create mic VAD processor: {}", e);
+                panic!("Mic VAD processor creation failed: {}", e);
+            });
+        let sys_vad_processor = ContinuousVadProcessor::new(sample_rate, redemption_time)
+            .unwrap_or_else(|e| {
+                error!("Failed to create system VAD processor: {}", e);
+                panic!("System VAD processor creation failed: {}", e);
+            });
+
+        info!(
+            "VAD pipeline: separate mic + system paths, redemption={}ms",
+            redemption_time
+        );
 
         // Initialize professional audio mixing components
         let ring_buffer = AudioMixerRingBuffer::new(sample_rate);
@@ -748,7 +758,8 @@ impl AudioPipeline {
             receiver,
             transcription_sender,
             state,
-            vad_processor,
+            mic_vad_processor,
+            sys_vad_processor,
             sample_rate,
             chunk_id_counter: 0,
             // Performance optimization: reduce logging frequency
@@ -831,37 +842,17 @@ impl AudioPipeline {
                             // Previous 2x gain was causing excessive limiting/distortion
                             let mixed_with_gain = mixed_clean;
 
-                            // STEP 3: Send mixed audio for transcription (VAD + Whisper)
-                            match self.vad_processor.process_audio(&mixed_with_gain) {
-                                Ok(speech_segments) => {
-                                    for segment in speech_segments {
-                                        let duration_ms = segment.end_timestamp_ms - segment.start_timestamp_ms;
-
-                                        if segment.samples.len() >= 800 {  // Minimum 50ms at 16kHz - matches Parakeet capability
-                                            info!("📤 Sending VAD segment: {:.1}ms, {} samples",
-                                                  duration_ms, segment.samples.len());
-
-                                            let transcription_chunk = AudioChunk {
-                                                data: segment.samples,
-                                                sample_rate: 16000,
-                                                timestamp: segment.start_timestamp_ms / 1000.0,
-                                                chunk_id: self.chunk_id_counter,
-                                                device_type: DeviceType::Microphone,  // Mixed audio
-                                            };
-
-                                            if let Err(e) = self.transcription_sender.send(transcription_chunk) {
-                                                warn!("Failed to send VAD segment: {}", e);
-                                            } else {
-                                                self.chunk_id_counter += 1;
-                                            }
-                                        } else {
-                                            debug!("⏭️ Dropping short VAD segment: {:.1}ms ({} samples < 800)",
-                                                   duration_ms, segment.samples.len());
-                                        }
-                                    }
+                            // STEP 3: Transcribe mic and system audio on separate VAD paths for speaker attribution
+                            if mic_window.iter().any(|&s| s.abs() > 0.0005) {
+                                match self.mic_vad_processor.process_audio(&mic_window) {
+                                    Ok(segments) => self.emit_vad_segments(segments, DeviceType::Microphone),
+                                    Err(e) => warn!("⚠️ Mic VAD error: {}", e),
                                 }
-                                Err(e) => {
-                                    warn!("⚠️ VAD error: {}", e);
+                            }
+                            if sys_window.iter().any(|&s| s.abs() > 0.0005) {
+                                match self.sys_vad_processor.process_audio(&sys_window) {
+                                    Ok(segments) => self.emit_vad_segments(segments, DeviceType::System),
+                                    Err(e) => warn!("⚠️ System VAD error: {}", e),
                                 }
                             }
 
@@ -897,42 +888,54 @@ impl AudioPipeline {
         Ok(())
     }
 
+    fn emit_vad_segments(
+        &mut self,
+        speech_segments: Vec<super::vad::SpeechSegment>,
+        device_type: DeviceType,
+    ) {
+        for segment in speech_segments {
+            let duration_ms = segment.end_timestamp_ms - segment.start_timestamp_ms;
+
+            if segment.samples.len() >= MIN_VAD_SAMPLES {
+                info!(
+                    "📤 {:?} VAD segment: {:.1}ms, {} samples",
+                    device_type,
+                    duration_ms,
+                    segment.samples.len()
+                );
+
+                let transcription_chunk = AudioChunk {
+                    data: segment.samples,
+                    sample_rate: 16000,
+                    timestamp: segment.start_timestamp_ms / 1000.0,
+                    chunk_id: self.chunk_id_counter,
+                    device_type: device_type.clone(),
+                };
+
+                if self.transcription_sender.send(transcription_chunk).is_ok() {
+                    self.chunk_id_counter += 1;
+                }
+            } else {
+                debug!(
+                    "⏭️ Dropping short {:?} segment: {:.1}ms ({} samples)",
+                    device_type,
+                    duration_ms,
+                    segment.samples.len()
+                );
+            }
+        }
+    }
+
     fn flush_remaining_audio(&mut self) -> Result<()> {
         info!("Flushing remaining audio from pipeline (processed {} chunks)", self.processed_chunks);
 
-        // Flush any remaining audio from VAD processor and send segments to transcription
-        match self.vad_processor.flush() {
-            Ok(final_segments) => {
-                for segment in final_segments {
-                    let duration_ms = segment.end_timestamp_ms - segment.start_timestamp_ms;
-
-                    // Send segments >= 50ms (800 samples at 16kHz) - matches main pipeline filter
-                    if segment.samples.len() >= 800 {
-                        info!("📤 Sending final VAD segment to Whisper: {:.1}ms duration, {} samples",
-                              duration_ms, segment.samples.len());
-
-                        let transcription_chunk = AudioChunk {
-                            data: segment.samples,
-                            sample_rate: 16000,
-                            timestamp: segment.start_timestamp_ms / 1000.0,
-                            chunk_id: self.chunk_id_counter,
-                            device_type: DeviceType::Microphone,
-                        };
-
-                        if let Err(e) = self.transcription_sender.send(transcription_chunk) {
-                            warn!("Failed to send final VAD segment: {}", e);
-                        } else {
-                            self.chunk_id_counter += 1;
-                        }
-                    } else {
-                        info!("⏭️ Skipping short final segment: {:.1}ms ({} samples < 800)",
-                              duration_ms, segment.samples.len());
-                    }
-                }
-            }
-            Err(e) => {
-                warn!("Failed to flush VAD processor: {}", e);
-            }
+        match self.mic_vad_processor.flush() {
+            Ok(segments) => self.emit_vad_segments(segments, DeviceType::Microphone),
+            Err(e) => warn!("Failed to flush mic VAD: {}", e),
+        }
+        match self.sys_vad_processor.flush() {
+            Ok(segments) => self.emit_vad_segments(segments, DeviceType::System),
+            Err(e) => warn!("Failed to flush system VAD: {}", e),
         }
 
         Ok(())
